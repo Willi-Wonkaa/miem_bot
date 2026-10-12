@@ -4,6 +4,7 @@
    `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
 2. Добавить `MIEM_knowledge_base_unified.zip` и `HSE_Answers_RU.xlsx` в `data/raw/`.
    Если они рядом с исходным ноутбуком: `python scripts/import_data.py ..`.
+   Исходное имя `MIEM_HSE_knowledge_base.zip` тоже поддерживается при импорте.
    Данные разрешено коммитить в Git; файлы от 100 MiB нужно хранить на сервере.
 3. Выполнить команды из README. Сначала индексатор, затем сервисы.
 
@@ -19,6 +20,14 @@ Excel необязателен; первая вкладка, колонки: `О
 - `shared/raw/` — исходная база и Excel;
 - `releases/<commit>` — версии проекта;
 - `current` — ссылка на успешно запущенную версию.
+
+До первого запуска подготовленная версия доступна через `pending`.
+После заполнения `shared/.env` первый запуск:
+
+```bash
+release=$(basename "$(readlink -f /opt/miem-bot/pending)")
+bash "/opt/miem-bot/incoming/$release.sh" "$release"
+```
 
 Подготовка нового Ubuntu 24.04: `sudo bash scripts/bootstrap.sh deploy-key.pub`.
 Требуются SSH-ключ и пользователь `miem-deploy`; скрипт ставит Docker + Compose.

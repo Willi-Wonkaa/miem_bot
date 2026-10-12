@@ -13,7 +13,7 @@
 | `app/rag/pipeline.py` | FAQ → rewrite → retrieval → Qwen rerank → Qwen answer | 10, 12, история |
 | `app/rag/api.py` | Внутренний HTTP API, авторизация, ограничение параллелизма | Новый серверный слой |
 | `app/telegram/` | Polling, форматирование, Redis-история, блокировка повторных запросов | Бот |
-| `data/raw/` | Архив базы и Excel, будут добавлены отдельно | Загрузки Colab |
+| `data/raw/` | Архив базы: 205 документов; Excel с готовыми ответами | Загрузки Colab |
 | `scripts/` | Импорт данных, подготовка VPS, деплой | Замена ручного запуска |
 | `tests/` | Индексация, retrieval, API, Telegram; без внешних токенов | Замена sanity-прогонов |
 

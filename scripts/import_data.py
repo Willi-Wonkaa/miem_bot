@@ -11,6 +11,8 @@ destination = Path(__file__).resolve().parents[1] / "data" / "raw"
 destination.mkdir(parents=True, exist_ok=True)
 for name in ["MIEM_knowledge_base_unified.zip", "HSE_Answers_RU.xlsx"]:
     source = args.source / name
+    if name == "MIEM_knowledge_base_unified.zip" and not source.is_file():
+        source = args.source / "MIEM_HSE_knowledge_base.zip"
     if not source.is_file():
         print(f"Missing: {source}")
         continue
