@@ -1,0 +1,79 @@
+name: CI and deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: miem-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.23"
+      - run: uv sync --frozen --extra bot --python 3.12
+      - run: uv run --frozen --extra bot ruff check .
+      - run: uv run --frozen --extra bot ruff format --check .
+      - run: uv run --frozen --extra bot pytest -q
+      - name: Validate Compose
+        run: |
+          cp .env.example .env
+          docker compose --profile index config --quiet
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --target bot -t miem-bot:ci .
+      - run: docker build --target rag -t miem-rag:ci .
+      - name: Check container imports
+        run: |
+          docker run --rm --network none --entrypoint python miem-bot:ci -c 'import app.telegram.bot'
+          docker run --rm --network none --entrypoint python miem-rag:ci -c 'import torch, sentence_transformers, app.rag.api; assert not torch.cuda.is_available()'
+      - name: Package tested source
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: git archive --format=tar HEAD | gzip > release.tar.gz
+      - uses: actions/upload-artifact@v4
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        with:
+          name: release
+          path: release.tar.gz
+          retention-days: 7
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.23"
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+      - run: uv sync --frozen --no-dev --extra deploy --python 3.12
+      - name: Deploy tested commit
+        run: uv run --frozen --no-dev --extra deploy python scripts/remote_deploy.py
+        env:
+          DEPLOY_SHA: ${{ github.sha }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}

@@ -218,3 +218,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Project secrets and generated runtime artifacts
+.env.*
+!.env.example
+.deploy/
+data/index/
+data/models/
+*.pem
+*.key

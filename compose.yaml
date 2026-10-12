@@ -1,0 +1,110 @@
+name: miem-bot
+
+x-rag-environment: &rag-environment
+  EMBED_MODEL: ${EMBED_MODEL:-intfloat/multilingual-e5-base}
+  EMBED_DEVICE: cpu
+  EMBED_BATCH_SIZE: ${EMBED_BATCH_SIZE:-16}
+  INDEX_DIR: /data/index
+  HF_HOME: /data/models
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  indexer:
+    build:
+      context: .
+      target: rag
+    image: miem-rag:${RELEASE_TAG:-local}
+    profiles: [index]
+    command: [python, -m, app.rag.indexing]
+    environment:
+      <<: *rag-environment
+      KB_ZIP: /data/raw/MIEM_knowledge_base_unified.zip
+      FAQ_PATH: /data/raw/HSE_Answers_RU.xlsx
+    volumes:
+      - ./data/raw:/data/raw:ro
+      - index-data:/data/index
+      - model-cache:/data/models
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    logging: *logging
+
+  rag:
+    build:
+      context: .
+      target: rag
+    image: miem-rag:${RELEASE_TAG:-local}
+    restart: unless-stopped
+    environment:
+      <<: *rag-environment
+      POLZA_API_KEY: ${POLZA_API_KEY:?Set POLZA_API_KEY in .env}
+      RAG_API_TOKEN: ${RAG_API_TOKEN:?Set RAG_API_TOKEN in .env}
+      POLZA_BASE_URL: ${POLZA_BASE_URL:-https://api.polza.ai/v1}
+      GENERATOR_MODEL: ${GENERATOR_MODEL:-qwen/qwen3.5-9b}
+      RAG_CONCURRENCY: ${RAG_CONCURRENCY:-2}
+      REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-360}
+    volumes:
+      - index-data:/data/index:ro
+      - model-cache:/data/models
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      start_period: 120s
+      retries: 12
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    logging: *logging
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: [redis-server, --appendonly, "yes", --maxmemory, 256mb, --maxmemory-policy, noeviction]
+    volumes: [redis-data:/data]
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    security_opt: [no-new-privileges:true]
+    logging: *logging
+
+  bot:
+    build:
+      context: .
+      target: bot
+    image: miem-bot:${RELEASE_TAG:-local}
+    restart: unless-stopped
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?Set TELEGRAM_BOT_TOKEN in .env}
+      RAG_API_TOKEN: ${RAG_API_TOKEN:?Set RAG_API_TOKEN in .env}
+      RAG_URL: http://rag:8000
+      REDIS_URL: redis://redis:6379/0
+      HISTORY_TTL: ${HISTORY_TTL:-86400}
+      REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-360}
+    depends_on:
+      rag:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python, -c, "import pathlib,time; p=pathlib.Path('/tmp/bot-heartbeat'); assert p.exists() and time.time()-float(p.read_text())<100"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    logging: *logging
+
+volumes:
+  index-data:
+  model-cache:
+  redis-data:
