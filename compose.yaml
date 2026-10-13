@@ -33,9 +33,11 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       SERVICE_REPORT_SECONDS: ${SERVICE_REPORT_SECONDS:-60}
       TIMEZONE: ${TIMEZONE:-Europe/Moscow}
+      HOST_STATUS_PATH: /data/host/host.json
     volumes:
       - monitor-data:/data/monitor
       - ./logs:/data/logs
+      - ./host-monitor:/data/host:ro
     healthcheck:
       test: [CMD, python, -c, "import pathlib,time; p=pathlib.Path('/tmp/service-heartbeat'); assert p.exists() and time.time()-float(p.read_text())<30"]
       interval: 5s
@@ -72,6 +74,7 @@ services:
       service:
         condition: service_healthy
     cpus: ${INDEX_CPU_LIMIT:-1.6}
+    stop_grace_period: 60s
     cpu_shares: 256
     mem_limit: ${INDEX_MEM_LIMIT:-3g}
     memswap_limit: ${INDEX_MEM_LIMIT:-3g}

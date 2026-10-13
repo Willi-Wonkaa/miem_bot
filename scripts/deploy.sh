@@ -7,8 +7,8 @@ if [[ ! $release =~ ^[a-f0-9]{40}$ ]]; then
   echo "Invalid commit SHA" >&2
   exit 1
 fi
-if [[ "$mode" != prepare && "$mode" != deploy ]]; then
-  echo "Mode must be prepare or deploy" >&2
+if [[ "$mode" != prepare && "$mode" != deploy && "$mode" != index ]]; then
+  echo "Mode must be prepare, deploy or index" >&2
   exit 1
 fi
 root=/opt/miem-bot
@@ -41,7 +41,9 @@ PY
 
 ln -sfn "$root/shared/.env" "$target/.env"
 mkdir -p "$root/shared/logs"
+mkdir -p "$root/shared/host"
 ln -sfn "$root/shared/logs" "$target/logs"
+ln -sfn "$root/shared/host" "$target/host-monitor"
 # Keep the tracked raw directory, and bind the shared raw directory through an override.
 cat > "$target/compose.server.yaml" <<'YAML'
 services:
@@ -64,9 +66,7 @@ if [[ "$mode" == prepare ]]; then
   exit 0
 fi
 
-# Indexing is an explicit maintenance task, never an implicit deployment step.
-"${compose[@]}" --profile index run --rm --no-deps --entrypoint python \
-  indexer -m app.rag.check_index
+# A cold or partial corpus is supported; RAG responds with progress while it warms up.
 
 previous=$(readlink -f "$root/current" 2>/dev/null || true)
 rollback() {
@@ -82,7 +82,24 @@ rollback() {
 }
 trap rollback ERR
 "${compose[@]}" up -d --no-build --force-recreate --wait --wait-timeout 120 service
+bash "$target/scripts/start_monitor.sh" "$target"
 "${compose[@]}" up -d --no-build --force-recreate --wait --wait-timeout 300 redis rag bot
 ln -sfn "$target" "$root/current"
 trap - ERR
 echo "Deployed $release"
+if [[ "$mode" == index ]]; then
+  if docker inspect miem-bot-indexer >/dev/null 2>&1; then
+    if [[ "$(docker inspect --format '{{.State.Running}}' miem-bot-indexer)" == true ]]; then
+      echo "Indexer is already running" >&2
+      exit 1
+    fi
+    docker rm miem-bot-indexer >/dev/null
+  fi
+  "${compose[@]}" --profile index run -d --no-deps --name miem-bot-indexer indexer
+  docker logs --follow miem-bot-indexer
+  status=$(docker wait miem-bot-indexer)
+  if [[ "$status" != 0 ]]; then
+    echo "Indexing stopped with exit $status; published data and checkpoints remain available" >&2
+    exit 1
+  fi
+fi

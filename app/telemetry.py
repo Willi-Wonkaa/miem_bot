@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import sqlite3
 import time
 import uuid
@@ -191,6 +192,7 @@ class Telemetry:
 
     def host(self):
         try:
-            return json.loads((self.directory / "host.json").read_text(encoding="utf-8"))
+            path = Path(os.environ.get("HOST_STATUS_PATH", str(self.directory / "host.json")))
+            return json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return {}

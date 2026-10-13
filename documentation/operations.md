@@ -22,16 +22,9 @@ Excel необязателен; первая вкладка, колонки: `О
 - `current` — ссылка на успешно запущенную версию.
 
 До первого запуска подготовленная версия доступна через `pending`.
-После заполнения `shared/.env` подготовка и первый запуск (индексация выполняется явно):
-
-```bash
-release=$(basename "$(readlink -f /opt/miem-bot/pending)")
-bash "/opt/miem-bot/incoming/$release.sh" "$release" prepare
-cd /opt/miem-bot/pending
-export RELEASE_TAG="$release"
-docker compose -f compose.yaml -f compose.server.yaml --profile index run --rm indexer
-bash "/opt/miem-bot/incoming/$release.sh" "$release"
-```
+После заполнения `shared/.env` подготовка, запуск и возобновление индексации — через Actions.
+Режимы: `prepare` (доставка/сборка), `deploy` (запуск), `index` (запуск и индексация).
+Ручные действия ассистента по SSH не используются. Индексатор сохраняет прогресс на диске.
 
 Подготовка нового Ubuntu 24.04: `sudo bash scripts/bootstrap.sh deploy-key.pub`.
 Требуются SSH-ключ и пользователь `miem-deploy`; скрипт ставит Docker + Compose.

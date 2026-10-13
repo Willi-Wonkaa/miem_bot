@@ -18,6 +18,7 @@ from app.rag.indexing import (
 )
 
 stemmer = SnowballStemmer("russian")
+log = logging.getLogger(__name__)
 
 
 def tokenize(text: str) -> list[str]:
@@ -33,11 +34,10 @@ def is_english(question: str) -> bool:
 
 
 class Retriever:
-    def __init__(self, settings: Settings, embedder=None):
+    def __init__(self, settings: Settings, embedder=None, directory=None):
         self.settings = settings
-        directory = current_generation(settings.index_dir)
+        directory = directory or current_generation(settings.index_dir)
         metadata = json.loads((directory / "metadata.json").read_text(encoding="utf-8"))
-        self.metadata = metadata
         if metadata["format_version"] != FORMAT_VERSION:
             raise ValueError("Unsupported index format; run indexer")
         if metadata["embed_model"] != settings.embed_model:
@@ -46,6 +46,8 @@ class Retriever:
             settings.embed_quantize and settings.embed_device == "cpu"
         ):
             raise ValueError("Embedding precision changed; run indexer")
+        self.metadata = metadata
+        self.generation = directory.name
         self.chunks = json.loads((directory / "chunks.json").read_text(encoding="utf-8"))
         self.links = json.loads((directory / "links.json").read_text(encoding="utf-8"))
         self.faq = json.loads((directory / "faq.json").read_text(encoding="utf-8"))
@@ -66,11 +68,12 @@ class Retriever:
             (chunk["document_id"], int(chunk["chunk_id"])): idx
             for idx, chunk in enumerate(self.chunks)
         }
-        logging.getLogger(__name__).info(
-            "retriever_ready chunks=%d faq=%d links=%d",
+        log.info(
+            "retriever_loaded generation=%s documents=%d chunks=%d complete=%s",
+            self.generation,
+            metadata.get("indexed_files", 0),
             len(self.chunks),
-            len(self.faq),
-            len(self.links),
+            metadata.get("complete"),
         )
 
     def encode_query(self, question: str) -> np.ndarray:
@@ -88,10 +91,12 @@ class Retriever:
                 scores[int(idx)] += 1 / (60 + rank)
         for rank, idx in enumerate(lexical_ids, start=1):
             scores[int(idx)] += 0.9 / (60 + rank)
-        return [
+        result = [
             {"idx": idx, "rrf_score": score, **self.chunks[idx]}
             for idx, score in sorted(scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
         ]
+        log.info("retrieval_completed generation=%s candidates=%d", self.generation, len(result))
+        return result
 
     def best_links(self, question: str, top_k: int = 2) -> list[dict]:
         if not self.links:
@@ -124,6 +129,12 @@ class Retriever:
             scores[best] >= self.settings.faq_rrf_threshold
             and dense[best] >= self.settings.faq_cosine_threshold
         ):
+            log.info(
+                "faq_match generation=%s id=%s score=%.4f",
+                self.generation,
+                self.faq[best].get("id"),
+                scores[best],
+            )
             return self.faq[best]["answer"]
         return None
 

@@ -8,7 +8,7 @@ from app.config import Settings
 from app.rag.indexing import FORMAT_VERSION, current_generation, fingerprint
 
 
-def validate_index(settings: Settings) -> Path:
+def validate_index(settings: Settings, allow_partial=False) -> Path:
     try:
         directory = current_generation(settings.index_dir)
         metadata = json.loads((directory / "metadata.json").read_text(encoding="utf-8"))
@@ -16,6 +16,8 @@ def validate_index(settings: Settings) -> Path:
             raise ValueError("Unsupported index format")
         if metadata["embed_model"] != settings.embed_model:
             raise ValueError("Embedding model changed")
+        if not metadata.get("complete") and not allow_partial:
+            raise ValueError("Indexing is not complete")
         if metadata["build_hash"] != fingerprint(settings):
             raise ValueError("Knowledge base or indexing code changed")
         for name in ["documents.faiss", "chunks.json", "links.json", "faq.json", "extras.npz"]:
@@ -30,7 +32,10 @@ def validate_index(settings: Settings) -> Path:
 
 if __name__ == "__main__":
     try:
-        print("Validated index:", validate_index(Settings()).name)
+        print(
+            "Validated index:",
+            validate_index(Settings(), allow_partial="--allow-partial" in sys.argv).name,
+        )
     except ValueError as error:
         print(str(error), file=sys.stderr)
         sys.exit(1)

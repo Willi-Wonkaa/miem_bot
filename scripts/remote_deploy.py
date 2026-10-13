@@ -13,7 +13,7 @@ import paramiko
 def deployment_command(sha: str, mode: str) -> str:
     if not re.fullmatch(r"[a-f0-9]{40}", sha):
         raise ValueError("Invalid commit SHA")
-    if mode not in {"prepare", "deploy"}:
+    if mode not in {"prepare", "deploy", "index"}:
         raise ValueError("Invalid deployment mode")
     script = shlex.quote(f"/opt/miem-bot/incoming/{sha}.sh")
     return f"bash {script} {sha} {mode}"

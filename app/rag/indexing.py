@@ -3,16 +3,12 @@
 import hashlib
 import json
 import logging
-import os
 import re
 import stat
-import tempfile
 import time
-import uuid
 import zipfile
 from pathlib import Path
 
-import faiss
 import numpy as np
 from openpyxl import load_workbook
 
@@ -21,7 +17,7 @@ from app.rag.chunking import build_document_chunks
 from app.rag.parsing import extract_blocks
 
 log = logging.getLogger(__name__)
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 
 
 def make_embedder(settings: Settings):
@@ -148,9 +144,7 @@ def read_faq(path: Path) -> list[dict]:
 
 def fingerprint(settings: Settings) -> str:
     digest = hashlib.sha256()
-    digest.update(
-        f"{FORMAT_VERSION}:{settings.embed_model}:{settings.embed_quantize and settings.embed_device == 'cpu'}".encode()
-    )
+    digest.update(encoding_signature(settings).encode())
     for path in [settings.kb_zip, settings.faq_path]:
         digest.update(path.name.encode())
         if path.is_file():
@@ -159,7 +153,14 @@ def fingerprint(settings: Settings) -> str:
                     digest.update(block)
         else:
             digest.update(b"missing")
-    for name in ["parsing.py", "chunking.py", "indexing.py"]:
+    return digest.hexdigest()
+
+
+def encoding_signature(settings: Settings) -> str:
+    digest = hashlib.sha256()
+    quantized = settings.embed_quantize and settings.embed_device == "cpu"
+    digest.update(f"{FORMAT_VERSION}:{settings.embed_model}:{quantized}:passage-v1".encode())
+    for name in ["parsing.py", "chunking.py", "parser_worker.py"]:
         digest.update(Path(__file__).with_name(name).read_bytes())
     return digest.hexdigest()
 
@@ -172,93 +173,15 @@ def current_generation(index_dir: Path) -> Path:
 
 
 def build_index(settings: Settings, embedder=None) -> Path:
-    from app.rag.progress import IndexObserver
+    from app.rag.incremental import IncrementalIndexer
+    from app.rag.storage import writer_lock
 
-    observer = IndexObserver(settings)
     try:
-        result = _build_index(settings, embedder, observer)
-        observer.report("completed", force=True)
-        observer.state.component("indexer", "completed", observer.run_id)
-        return result
+        with writer_lock(settings.index_dir):
+            return IncrementalIndexer(settings, embedder).run()
     except BaseException:
-        observer.report("interrupted", force=True)
-        observer.state.component("indexer", "interrupted", observer.run_id)
-        log.exception("indexing_interrupted")
+        log.exception("indexer_stopped_with_error; checkpoints retained")
         raise
-
-
-def _build_index(settings: Settings, embedder, observer) -> Path:
-    if not settings.kb_zip.is_file():
-        raise FileNotFoundError(f"Place knowledge base archive at {settings.kb_zip}")
-    settings.index_dir.mkdir(parents=True, exist_ok=True)
-    build_hash = fingerprint(settings)
-    try:
-        existing = current_generation(settings.index_dir)
-        metadata = json.loads((existing / "metadata.json").read_text(encoding="utf-8"))
-        if metadata["build_hash"] == build_hash and all(
-            (existing / name).is_file()
-            for name in ["documents.faiss", "chunks.json", "links.json", "faq.json", "extras.npz"]
-        ):
-            observer.files = metadata.get("files", [])
-            observer.completed = set(observer.files)
-            observer.total_chunks = observer.encoded = metadata["chunks"]
-            log.info("Knowledge base unchanged; reusing index %s", existing.name)
-            return existing
-    except (OSError, ValueError, KeyError):
-        pass
-
-    embedder = embedder or make_embedder(settings)
-    with tempfile.TemporaryDirectory() as unpacked:
-        root = Path(unpacked)
-        safe_extract(settings.kb_zip, root)
-        chunks = read_chunks(root)
-        observer.prepare(root, chunks)
-        links = read_links(root)
-        faq = read_faq(settings.faq_path)
-        vectors = observer.encode(embedder, chunks, settings.embed_batch_size)
-        dimension = vectors.shape[1]
-        index = faiss.IndexFlatIP(dimension)
-        index.add(vectors)
-        link_vectors = (
-            encode_passages(embedder, [x["description"] for x in links], settings.embed_batch_size)
-            if links
-            else np.empty((0, dimension), dtype="float32")
-        )
-        faq_vectors = (
-            encode_passages(embedder, [x["question"] for x in faq], settings.embed_batch_size)
-            if faq
-            else np.empty((0, dimension), dtype="float32")
-        )
-
-    generation = uuid.uuid4().hex
-    with tempfile.TemporaryDirectory(dir=settings.index_dir) as staging:
-        target = Path(staging)
-        faiss.write_index(index, str(target / "documents.faiss"))
-        for name, payload in [("chunks", chunks), ("links", links), ("faq", faq)]:
-            (target / f"{name}.json").write_text(
-                json.dumps(payload, ensure_ascii=False), encoding="utf-8"
-            )
-        np.savez(target / "extras.npz", links=link_vectors, faq=faq_vectors)
-        metadata = {
-            "format_version": FORMAT_VERSION,
-            "build_hash": build_hash,
-            "embed_model": settings.embed_model,
-            "chunks": len(chunks),
-            "links": len(links),
-            "faq": len(faq),
-            "indexed_files": len({chunk["file"] for chunk in chunks}),
-            "total_files": len(observer.files),
-            "files": list(dict.fromkeys(chunk["file"] for chunk in chunks)),
-            "complete": True,
-            "quantized": settings.embed_quantize and settings.embed_device == "cpu",
-        }
-        (target / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
-        os.replace(target, settings.index_dir / generation)
-    pointer = settings.index_dir / "CURRENT.tmp"
-    pointer.write_text(generation, encoding="utf-8")
-    os.replace(pointer, settings.index_dir / "CURRENT")
-    log.info("Index built: chunks=%d links=%d faq=%d", len(chunks), len(links), len(faq))
-    return settings.index_dir / generation
 
 
 if __name__ == "__main__":

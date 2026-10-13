@@ -3,16 +3,10 @@
 Telegram-ассистент НИУ ВШЭ: готовые ответы из Excel и RAG по базе документов.
 Python 3.12, Docker Compose, GitHub Actions. GPU не требуется.
 
-На сервере:
-
-```bash
-cp .env.example .env
-# Заполнить TELEGRAM_BOT_TOKEN, POLZA_API_KEY, RAG_API_TOKEN.
-# Положить архив базы и Excel в data/raw/.
-docker compose build bot rag
-docker compose --profile index run --rm indexer
-docker compose up -d --wait --wait-timeout 300
-```
+Код и проверки — через Git/GitHub Actions. Добавить токены в серверный `.env`,
+затем Actions → CI and deploy → Run workflow: `prepare`, `deploy` или `index`.
+`service` запускается первым; база становится доступна после первого проиндексированного файла.
+Индексация запускается только при выборе `index`, обычный деплой её не возобновляет.
 
 Проверки в CI: `uv sync --extra bot`, `uv run --extra bot pytest -q`, `uv run --extra bot ruff check .`.
 

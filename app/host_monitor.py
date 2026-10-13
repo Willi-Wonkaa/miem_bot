@@ -5,6 +5,7 @@ import json
 import logging
 import math
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -12,6 +13,23 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 log = logging.getLogger("host_monitor")
+
+
+def memory_usage(value):
+    match = re.fullmatch(r"\s*([\d.]+)\s*(B|kB|KB|MB|GB|KiB|MiB|GiB)\s*", value.split("/", 1)[0])
+    if not match:
+        raise ValueError("Unexpected Docker memory usage")
+    unit = {
+        "B": 1,
+        "kB": 1000,
+        "KB": 1000,
+        "MB": 1000**2,
+        "GB": 1000**3,
+        "KiB": 1024,
+        "MiB": 1024**2,
+        "GiB": 1024**3,
+    }[match[2]]
+    return int(float(match[1]) * unit)
 
 
 def command(*args):
@@ -138,9 +156,12 @@ def main():
                     for line in Path(f"/proc/{pid}/cgroup").read_text().splitlines()
                     if line.startswith("0:")
                 )
-                indexer_ram = int(
-                    (Path("/sys/fs/cgroup") / cgroup.lstrip("/") / "memory.current").read_text()
-                )
+                try:
+                    indexer_ram = int(
+                        (Path("/sys/fs/cgroup") / cgroup.lstrip("/") / "memory.current").read_text()
+                    )
+                except OSError:
+                    indexer_ram = memory_usage(stats["MemUsage"])
             limits = budget(
                 total_cpu,
                 idle_cpu,

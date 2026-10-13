@@ -2,16 +2,15 @@ name: CI and deploy
 
 on:
   push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
     inputs:
       mode:
-        description: "prepare: upload/build; deploy: start services with an existing index"
+        description: "prepare: upload/build; deploy: start services; index: start services and resumable indexing"
         type: choice
         required: true
         default: prepare
-        options: [prepare, deploy]
+        options: [prepare, deploy, index]
 
 permissions:
   contents: read
@@ -35,6 +34,7 @@ jobs:
       - run: uv run --frozen --extra bot pytest -q
       - name: Validate Compose
         run: |
+          bash -n scripts/*.sh
           cp .env.example .env
           docker compose --profile index config --quiet
 
@@ -65,7 +65,7 @@ jobs:
     needs: build
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && (github.event_name == 'workflow_dispatch' || vars.DEPLOY_ENABLED == 'true')
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 180
     environment: production
     steps:
       - uses: actions/checkout@v4
