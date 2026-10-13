@@ -42,8 +42,9 @@ python scripts/start.py --no-wait       # запустить index, напеча
 
 Остановка ожидания через Ctrl+C не отменяет workflow и серверную индексацию.
 Вместо команды можно открыть [CI and deploy](https://github.com/Willi-Wonkaa/miem_bot/actions/workflows/ci-cd.yml)
-→ Run workflow → `main` → `index`. Автодеплой по push управляется переменной `DEPLOY_ENABLED`;
-для ручного запуска включать её не требуется.
+→ Run workflow → `main` → `index`. Каждый push в `main` автоматически проходит CI
+и запускает deploy в режиме `index`. После merge PR в `main` система обновляется сама.
+PR и другие ветки проверяются без изменения production. Переменная `DEPLOY_ENABLED` не требуется.
 
 ## Подготовка перед первым запуском
 

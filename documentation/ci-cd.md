@@ -2,7 +2,9 @@
 
 Workflow: `.github/workflows/ci-cd.yml`.
 PR/push: Ruff, pytest, Compose validation, сборка двух образов, проверка импортов в контейнерах.
-Push в `main` при `DEPLOY_ENABLED=true`: архив проверенного commit → SSH → сборка → служебный бот → монитор → остальные сервисы.
+Каждый push в `main`: тесты → сборка и проверки контейнеров → архив проверенного commit
+→ SSH → сборка на VPS → служебный бот → монитор → остальные сервисы → проверка старта
+фоновой индексации. Ручной запуск для штатного обновления не нужен.
 Секреты и `.env` не входят в архив или образы. Образы собираются на сервере; registry не требуется.
 При ошибке запуска скрипт восстанавливает предыдущий release.
 Предыдущие версии и индексы сохраняются; очистку выполнять после проверки новой версии.
@@ -17,8 +19,8 @@ Repository settings → Secrets and variables → Actions → Secrets:
 | `SSH_PRIVATE_KEY` | Полный приватный OpenSSH-ключ доступа `miem-deploy` |
 | `SSH_KNOWN_HOSTS` | Проверенная запись host key VPS из `known_hosts` |
 
-Repository variable `DEPLOY_ENABLED=true` включает автодеплой по push.
-Пока не нужно автоматически запускать сервисы, оставить `false`.
+Автодеплой в `main` включён самим workflow, без условия на `DEPLOY_ENABLED`.
+PR и push в другие ветки проходят CI/build без доступа к production deployment.
 GitHub environment: `production`.
 
 Actions → CI and deploy → Run workflow (ветка `main`):
