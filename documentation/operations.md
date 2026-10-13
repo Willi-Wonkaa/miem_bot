@@ -22,10 +22,14 @@ Excel необязателен; первая вкладка, колонки: `О
 - `current` — ссылка на успешно запущенную версию.
 
 До первого запуска подготовленная версия доступна через `pending`.
-После заполнения `shared/.env` первый запуск:
+После заполнения `shared/.env` подготовка и первый запуск (индексация выполняется явно):
 
 ```bash
 release=$(basename "$(readlink -f /opt/miem-bot/pending)")
+bash "/opt/miem-bot/incoming/$release.sh" "$release" prepare
+cd /opt/miem-bot/pending
+export RELEASE_TAG="$release"
+docker compose -f compose.yaml -f compose.server.yaml --profile index run --rm indexer
 bash "/opt/miem-bot/incoming/$release.sh" "$release"
 ```
 

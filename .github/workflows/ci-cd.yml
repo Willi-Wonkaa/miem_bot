@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "prepare: upload/build; deploy: start services with an existing index"
+        type: choice
+        required: true
+        default: prepare
+        options: [prepare, deploy]
 
 permissions:
   contents: read
@@ -55,7 +62,7 @@ jobs:
 
   deploy:
     needs: build
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.DEPLOY_ENABLED == 'true'
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && (github.event_name == 'workflow_dispatch' || vars.DEPLOY_ENABLED == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 35
     environment: production
@@ -72,6 +79,7 @@ jobs:
         run: uv run --frozen --no-dev --extra deploy python scripts/remote_deploy.py
         env:
           DEPLOY_SHA: ${{ github.sha }}
+          DEPLOY_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'deploy' }}
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
           SSH_USER: ${{ secrets.SSH_USER }}

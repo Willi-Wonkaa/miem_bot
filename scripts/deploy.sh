@@ -2,8 +2,13 @@
 # Run on the server as miem-deploy. The source archive is uploaded by remote_deploy.py.
 set -euo pipefail
 release=${1:?Missing commit SHA}
+mode=${2:-deploy}
 if [[ ! $release =~ ^[a-f0-9]{40}$ ]]; then
   echo "Invalid commit SHA" >&2
+  exit 1
+fi
+if [[ "$mode" != prepare && "$mode" != deploy ]]; then
+  echo "Mode must be prepare or deploy" >&2
   exit 1
 fi
 root=/opt/miem-bot
@@ -48,21 +53,20 @@ compose=(docker compose --project-name miem-bot --project-directory "$target"
 "${compose[@]}" config --quiet
 "${compose[@]}" build bot rag
 
-previous=$(readlink -f "$root/current" 2>/dev/null || true)
-old_index=""
-if [[ -n "$previous" && -d "$previous" ]]; then
-  old_index=$(docker compose --project-name miem-bot --project-directory "$previous" \
-    -f "$previous/compose.yaml" -f "$previous/compose.server.yaml" \
-    exec -T rag cat /data/index/CURRENT 2>/dev/null || true)
+if [[ "$mode" == prepare ]]; then
+  ln -sfn "$target" "$root/pending"
+  echo "Prepared $release; services and indexing were not started"
+  exit 0
 fi
+
+# Indexing is an explicit maintenance task, never an implicit deployment step.
+"${compose[@]}" --profile index run --rm --no-deps --entrypoint python \
+  indexer -m app.rag.check_index
+
+previous=$(readlink -f "$root/current" 2>/dev/null || true)
 rollback() {
   echo "Deployment failed; restoring previous release" >&2
   if [[ -n "$previous" && -d "$previous" ]]; then
-    if [[ $old_index =~ ^[a-f0-9]{32}$ ]]; then
-      "${compose[@]}" --profile index run --rm --no-deps \
-        --entrypoint python indexer -c \
-        "from pathlib import Path; p=Path('/data/index/CURRENT.tmp'); p.write_text('$old_index'); p.replace('/data/index/CURRENT')"
-    fi
     export RELEASE_TAG="$(basename "$previous")"
     docker compose --project-name miem-bot --project-directory "$previous" \
       -f "$previous/compose.yaml" -f "$previous/compose.server.yaml" \
@@ -72,7 +76,6 @@ rollback() {
   fi
 }
 trap rollback ERR
-"${compose[@]}" --profile index run --rm --no-deps indexer
 "${compose[@]}" up -d --no-build --force-recreate --wait --wait-timeout 300
 ln -sfn "$target" "$root/current"
 trap - ERR
