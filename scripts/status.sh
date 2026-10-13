@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Read-only diagnostics; safe to run while deployment/indexing is in progress.
 set -euo pipefail
+if [[ "${1:-}" == repair-monitor ]]; then
+  # Run outside deploy.sh: the replacement process cannot inherit its lock descriptor.
+  bash /opt/miem-bot/current/scripts/start_monitor.sh /opt/miem-bot/current
+fi
 docker ps -a --filter label=com.docker.compose.project=miem-bot \
   --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
 free -m

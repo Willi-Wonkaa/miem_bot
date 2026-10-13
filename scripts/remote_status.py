@@ -30,7 +30,10 @@ def main():
                 look_for_keys=False,
                 timeout=30,
             )
-            stdin, stdout, _ = client.exec_command("bash -s 2>&1", timeout=180)
+            command = "bash -s"
+            if os.environ.get("REPAIR_MONITOR") == "true":
+                command += " -- repair-monitor"
+            stdin, stdout, _ = client.exec_command(command + " 2>&1", timeout=180)
             stdin.write(Path("scripts/status.sh").read_text(encoding="utf-8"))
             stdin.channel.shutdown_write()
             for line in stdout:

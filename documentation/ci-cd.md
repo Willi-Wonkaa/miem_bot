@@ -51,3 +51,6 @@ Docker state/health, CPU/RAM, настройки ресурсов и модел�
 RAG health/auth, сохранённый прогресс и последние логи индексатора.
 Он не блокируется выполняющейся индексацией из-за concurrency основного workflow.
 Запуск: `gh workflow run status.yml --ref main` либо Actions → System status → Run workflow.
+По умолчанию диагностика ничего не перезапускает. Параметр `repair_monitor=true`
+перезапускает только монитор VPS; он позволяет освободить унаследованную монитором
+блокировку старых версий deployment. Новая версия закрывает descriptor 9 перед `nohup`.

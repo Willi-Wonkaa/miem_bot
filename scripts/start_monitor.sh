@@ -20,7 +20,7 @@ if [[ -f "$directory/monitor.pid" ]]; then
 fi
 cp "$release_dir/app/host_monitor.py" "$directory/host-monitor.py"
 nohup python3 "$directory/host-monitor.py" --directory "$directory" --log-dir "$directory" \
-  >"$directory/monitor-console.txt" 2>&1 </dev/null &
+  >"$directory/monitor-console.txt" 2>&1 </dev/null 9>&- &
 echo "$!" > "$directory/monitor.pid"
 for attempt in $(seq 1 20); do
   if python3 - "$directory/host.json" "$(cat "$directory/monitor.pid")" <<'PY'

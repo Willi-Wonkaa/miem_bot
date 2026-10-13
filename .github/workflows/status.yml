@@ -2,6 +2,11 @@ name: System status
 
 on:
   workflow_dispatch:
+    inputs:
+      repair_monitor:
+        description: "Restart only the host monitor to release an inherited legacy deploy lock"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -25,3 +30,4 @@ jobs:
           SSH_USER: ${{ secrets.SSH_USER }}
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          REPAIR_MONITOR: ${{ inputs.repair_monitor }}
