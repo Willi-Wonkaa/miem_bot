@@ -1,3 +1,4 @@
+import logging
 import re
 from pathlib import Path
 
@@ -195,6 +196,7 @@ def extract_pdf_blocks(path):
 
 
 def extract_blocks(path):
+    logging.getLogger(__name__).info("document_parse file=%s", Path(path).name)
     ext = Path(path).suffix.lower()
 
     if ext == ".docx":

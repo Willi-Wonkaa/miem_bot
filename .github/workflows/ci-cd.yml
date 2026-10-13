@@ -49,6 +49,7 @@ jobs:
       - name: Check container imports
         run: |
           docker run --rm --network none --entrypoint python miem-bot:ci -c 'import app.telegram.bot'
+          docker run --rm --network none --entrypoint python miem-bot:ci -c 'import app.service.bot, app.host_monitor'
           docker run --rm --network none --entrypoint python miem-rag:ci -c 'import torch, sentence_transformers, app.rag.api; assert not torch.cuda.is_available()'
       - name: Package tested source
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'

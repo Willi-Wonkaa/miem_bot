@@ -7,6 +7,7 @@ import os
 import re
 import stat
 import tempfile
+import time
 import uuid
 import zipfile
 from pathlib import Path
@@ -24,9 +25,23 @@ FORMAT_VERSION = 1
 
 
 def make_embedder(settings: Settings):
+    import torch
     from sentence_transformers import SentenceTransformer
 
-    return SentenceTransformer(settings.embed_model, device=settings.embed_device)
+    started = time.perf_counter()
+    torch.set_num_threads(settings.embed_threads)
+    model = SentenceTransformer(settings.embed_model, device=settings.embed_device)
+    if settings.embed_quantize and settings.embed_device == "cpu":
+        torch.ao.quantization.quantize_dynamic(
+            model, {torch.nn.Linear}, dtype=torch.qint8, inplace=True
+        )
+    log.info(
+        "embedding_model_ready model=%s quantized=%s seconds=%.3f",
+        settings.embed_model,
+        settings.embed_quantize,
+        time.perf_counter() - started,
+    )
+    return model
 
 
 def encode_passages(embedder, texts: list[str], batch_size: int) -> np.ndarray:
@@ -133,7 +148,9 @@ def read_faq(path: Path) -> list[dict]:
 
 def fingerprint(settings: Settings) -> str:
     digest = hashlib.sha256()
-    digest.update(f"{FORMAT_VERSION}:{settings.embed_model}".encode())
+    digest.update(
+        f"{FORMAT_VERSION}:{settings.embed_model}:{settings.embed_quantize and settings.embed_device == 'cpu'}".encode()
+    )
     for path in [settings.kb_zip, settings.faq_path]:
         digest.update(path.name.encode())
         if path.is_file():
@@ -155,6 +172,22 @@ def current_generation(index_dir: Path) -> Path:
 
 
 def build_index(settings: Settings, embedder=None) -> Path:
+    from app.rag.progress import IndexObserver
+
+    observer = IndexObserver(settings)
+    try:
+        result = _build_index(settings, embedder, observer)
+        observer.report("completed", force=True)
+        observer.state.component("indexer", "completed", observer.run_id)
+        return result
+    except BaseException:
+        observer.report("interrupted", force=True)
+        observer.state.component("indexer", "interrupted", observer.run_id)
+        log.exception("indexing_interrupted")
+        raise
+
+
+def _build_index(settings: Settings, embedder, observer) -> Path:
     if not settings.kb_zip.is_file():
         raise FileNotFoundError(f"Place knowledge base archive at {settings.kb_zip}")
     settings.index_dir.mkdir(parents=True, exist_ok=True)
@@ -166,6 +199,9 @@ def build_index(settings: Settings, embedder=None) -> Path:
             (existing / name).is_file()
             for name in ["documents.faiss", "chunks.json", "links.json", "faq.json", "extras.npz"]
         ):
+            observer.files = metadata.get("files", [])
+            observer.completed = set(observer.files)
+            observer.total_chunks = observer.encoded = metadata["chunks"]
             log.info("Knowledge base unchanged; reusing index %s", existing.name)
             return existing
     except (OSError, ValueError, KeyError):
@@ -176,11 +212,10 @@ def build_index(settings: Settings, embedder=None) -> Path:
         root = Path(unpacked)
         safe_extract(settings.kb_zip, root)
         chunks = read_chunks(root)
+        observer.prepare(root, chunks)
         links = read_links(root)
         faq = read_faq(settings.faq_path)
-        vectors = encode_passages(
-            embedder, [retrieval_text(chunk) for chunk in chunks], settings.embed_batch_size
-        )
+        vectors = observer.encode(embedder, chunks, settings.embed_batch_size)
         dimension = vectors.shape[1]
         index = faiss.IndexFlatIP(dimension)
         index.add(vectors)
@@ -211,6 +246,11 @@ def build_index(settings: Settings, embedder=None) -> Path:
             "chunks": len(chunks),
             "links": len(links),
             "faq": len(faq),
+            "indexed_files": len({chunk["file"] for chunk in chunks}),
+            "total_files": len(observer.files),
+            "files": list(dict.fromkeys(chunk["file"] for chunk in chunks)),
+            "complete": True,
+            "quantized": settings.embed_quantize and settings.embed_device == "cpu",
         }
         (target / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
         os.replace(target, settings.index_dir / generation)
@@ -222,5 +262,8 @@ def build_index(settings: Settings, embedder=None) -> Path:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    build_index(Settings())
+    from app.logging_setup import setup_logging
+
+    settings = Settings()
+    setup_logging("indexer", settings)
+    build_index(settings)

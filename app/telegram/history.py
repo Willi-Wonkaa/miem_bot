@@ -1,3 +1,4 @@
+import logging
 import secrets
 
 from redis.asyncio import Redis
@@ -37,6 +38,8 @@ class HistoryStore:
             transaction.ltrim(key, -10, -1)
             transaction.expire(key, self.history_ttl)
             await transaction.execute()
+        logging.getLogger(__name__).info("history_saved session=%s", session)
 
     async def clear(self, session: str) -> None:
         await self.redis.delete(f"history:{session}")
+        logging.getLogger(__name__).info("history_cleared session=%s", session)

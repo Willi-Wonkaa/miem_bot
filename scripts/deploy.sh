@@ -40,6 +40,8 @@ for name in ('TELEGRAM_BOT_TOKEN', 'POLZA_API_KEY', 'RAG_API_TOKEN'):
 PY
 
 ln -sfn "$root/shared/.env" "$target/.env"
+mkdir -p "$root/shared/logs"
+ln -sfn "$root/shared/logs" "$target/logs"
 # Keep the tracked raw directory, and bind the shared raw directory through an override.
 cat > "$target/compose.server.yaml" <<'YAML'
 services:
@@ -52,6 +54,9 @@ compose=(docker compose --project-name miem-bot --project-directory "$target"
   -f "$target/compose.yaml" -f "$target/compose.server.yaml")
 "${compose[@]}" config --quiet
 "${compose[@]}" build bot rag
+docker run --rm --user 0 --entrypoint python \
+  -v "$root/shared/logs:/data/logs" "miem-bot:$release" \
+  -c 'import os; os.chown("/data/logs",10001,10001); os.chmod("/data/logs",0o755)'
 
 if [[ "$mode" == prepare ]]; then
   ln -sfn "$target" "$root/pending"
@@ -76,7 +81,8 @@ rollback() {
   fi
 }
 trap rollback ERR
-"${compose[@]}" up -d --no-build --force-recreate --wait --wait-timeout 300
+"${compose[@]}" up -d --no-build --force-recreate --wait --wait-timeout 120 service
+"${compose[@]}" up -d --no-build --force-recreate --wait --wait-timeout 300 redis rag bot
 ln -sfn "$target" "$root/current"
 trap - ERR
 echo "Deployed $release"

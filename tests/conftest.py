@@ -58,6 +58,8 @@ def corpus(tmp_path):
         kb_zip=archive,
         faq_path=faq,
         index_dir=tmp_path / "index",
+        monitor_dir=tmp_path / "monitor",
+        log_dir=tmp_path / "logs",
         rag_api_token="test-internal-key",
         polza_api_key="test-polza-key",
     )

@@ -13,11 +13,13 @@
 | `app/rag/pipeline.py` | FAQ → rewrite → retrieval → Qwen rerank → Qwen answer | 10, 12, история |
 | `app/rag/api.py` | Внутренний HTTP API, авторизация, ограничение параллелизма | Новый серверный слой |
 | `app/telegram/` | Polling, форматирование, Redis-история, блокировка повторных запросов | Бот |
+| `app/service/`, `app/telemetry.py` | Служебный Telegram-бот, уведомления, SQLite-счётчики и кнопки | Новый мониторинг |
+| `app/logging_setup.py`, `app/host_monitor.py` | TXT-логи, Docker-статусы, лимиты ресурсов индексатора | Новый мониторинг |
 | `data/raw/` | Архив базы: 205 документов; Excel с готовыми ответами | Загрузки Colab |
 | `scripts/` | Импорт данных, подготовка VPS, деплой | Замена ручного запуска |
 | `tests/` | Индексация, retrieval, API, Telegram; без внешних токенов | Замена sanity-прогонов |
 
-Контейнеры: `bot`, `rag`, `redis`. `indexer` — одноразовая задача через профиль `index`.
+Контейнеры: `service`, `bot`, `rag`, `redis`. `indexer` — одноразовая задача через профиль `index`.
 Volumes: `index-data` — версии индексов, `model-cache` — E5, `redis-data` — история.
 Снаружи порты не публикуются. Бот использует long polling.
 

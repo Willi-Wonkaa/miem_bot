@@ -1,3 +1,4 @@
+import logging
 import re
 
 from .parsing import clean_text
@@ -95,4 +96,7 @@ def build_document_chunks(blocks, meta, max_chars=1600):
             current_parts.append(piece)
 
     flush()
+    logging.getLogger(__name__).info(
+        "chunking_completed document=%s chunks=%d", meta["document_id"], len(chunks)
+    )
     return chunks

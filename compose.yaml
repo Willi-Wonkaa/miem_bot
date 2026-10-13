@@ -4,8 +4,13 @@ x-rag-environment: &rag-environment
   EMBED_MODEL: ${EMBED_MODEL:-intfloat/multilingual-e5-base}
   EMBED_DEVICE: cpu
   EMBED_BATCH_SIZE: ${EMBED_BATCH_SIZE:-16}
+  EMBED_QUANTIZE: ${EMBED_QUANTIZE:-true}
+  EMBED_THREADS: ${EMBED_THREADS:-2}
   INDEX_DIR: /data/index
   HF_HOME: /data/models
+  LOG_DIR: /data/logs
+  MONITOR_DIR: /data/monitor
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
 
 x-logging: &logging
   driver: json-file
@@ -14,6 +19,36 @@ x-logging: &logging
     max-file: "3"
 
 services:
+  service:
+    build:
+      context: .
+      target: bot
+    image: miem-bot:${RELEASE_TAG:-local}
+    command: [python, -m, app.service.bot]
+    restart: unless-stopped
+    environment:
+      SERVICE_BOT_TOKEN: ${SERVICE_BOT_TOKEN:-}
+      MONITOR_DIR: /data/monitor
+      LOG_DIR: /data/logs
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SERVICE_REPORT_SECONDS: ${SERVICE_REPORT_SECONDS:-60}
+      TIMEZONE: ${TIMEZONE:-Europe/Moscow}
+    volumes:
+      - monitor-data:/data/monitor
+      - ./logs:/data/logs
+    healthcheck:
+      test: [CMD, python, -c, "import pathlib,time; p=pathlib.Path('/tmp/service-heartbeat'); assert p.exists() and time.time()-float(p.read_text())<30"]
+      interval: 5s
+      timeout: 3s
+      start_period: 30s
+      retries: 6
+    cpus: 0.25
+    mem_limit: 256m
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    logging: *logging
+
   indexer:
     build:
       context: .
@@ -25,10 +60,21 @@ services:
       <<: *rag-environment
       KB_ZIP: /data/raw/MIEM_knowledge_base_unified.zip
       FAQ_PATH: /data/raw/HSE_Answers_RU.xlsx
+      INDEX_PARSE_WORKERS: ${INDEX_PARSE_WORKERS:-2}
+      INDEX_PUBLISH_PERCENT: ${INDEX_PUBLISH_PERCENT:-5}
     volumes:
       - ./data/raw:/data/raw:ro
       - index-data:/data/index
       - model-cache:/data/models
+      - monitor-data:/data/monitor
+      - ./logs:/data/logs
+    depends_on:
+      service:
+        condition: service_healthy
+    cpus: ${INDEX_CPU_LIMIT:-1.6}
+    cpu_shares: 256
+    mem_limit: ${INDEX_MEM_LIMIT:-3g}
+    memswap_limit: ${INDEX_MEM_LIMIT:-3g}
     read_only: true
     tmpfs: [/tmp]
     security_opt: [no-new-privileges:true]
@@ -48,9 +94,18 @@ services:
       GENERATOR_MODEL: ${GENERATOR_MODEL:-qwen/qwen3.5-9b}
       RAG_CONCURRENCY: ${RAG_CONCURRENCY:-2}
       REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-360}
+      INDEX_RELOAD_SECONDS: ${INDEX_RELOAD_SECONDS:-3}
     volumes:
       - index-data:/data/index:ro
       - model-cache:/data/models
+      - monitor-data:/data/monitor
+      - ./logs:/data/logs
+    depends_on:
+      service:
+        condition: service_healthy
+    cpus: ${RAG_CPU_LIMIT:-1.0}
+    cpu_shares: 2048
+    mem_limit: ${RAG_MEM_LIMIT:-3g}
     healthcheck:
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
       interval: 10s
@@ -67,6 +122,11 @@ services:
     restart: unless-stopped
     command: [redis-server, --appendonly, "yes", --maxmemory, 256mb, --maxmemory-policy, noeviction]
     volumes: [redis-data:/data]
+    depends_on:
+      service:
+        condition: service_healthy
+    cpus: 0.25
+    mem_limit: 384m
     healthcheck:
       test: [CMD, redis-cli, ping]
       interval: 10s
@@ -88,7 +148,15 @@ services:
       REDIS_URL: redis://redis:6379/0
       HISTORY_TTL: ${HISTORY_TTL:-86400}
       REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-360}
+      MONITOR_DIR: /data/monitor
+      LOG_DIR: /data/logs
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - monitor-data:/data/monitor
+      - ./logs:/data/logs
     depends_on:
+      service:
+        condition: service_healthy
       rag:
         condition: service_healthy
       redis:
@@ -100,6 +168,8 @@ services:
       start_period: 60s
       retries: 3
     read_only: true
+    cpus: 0.5
+    mem_limit: 512m
     tmpfs: [/tmp]
     security_opt: [no-new-privileges:true]
     logging: *logging
@@ -108,3 +178,4 @@ volumes:
   index-data:
   model-cache:
   redis-data:
+  monitor-data:

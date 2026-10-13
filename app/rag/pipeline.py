@@ -39,15 +39,40 @@ class Pipeline:
         remaining = deadline - time.perf_counter()
         if remaining <= 0:
             raise TimeoutError("Answer time budget exhausted")
-        response = self.client.chat.completions.create(
-            model=self.settings.generator_model,
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            timeout=min(90, remaining),
+        stage = "rewrite" if max_tokens == 150 else "rerank" if max_tokens == 750 else "answer"
+        started = time.perf_counter()
+        log.info(
+            "llm_request stage=%s model=%s input_chars=%d max_tokens=%d",
+            stage,
+            self.settings.generator_model,
+            sum(len(x["content"]) for x in messages),
+            max_tokens,
         )
+        try:
+            response = self.client.chat.completions.create(
+                model=self.settings.generator_model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                timeout=min(90, remaining),
+            )
+        except Exception:
+            log.exception(
+                "llm_request_failed stage=%s model=%s seconds=%.3f",
+                stage,
+                self.settings.generator_model,
+                time.perf_counter() - started,
+            )
+            raise
         text = (response.choices[0].message.content or "").strip()
         tokens = getattr(response.usage, "total_tokens", 0) or 0
+        log.info(
+            "llm_response stage=%s seconds=%.3f tokens=%d output_chars=%d",
+            stage,
+            time.perf_counter() - started,
+            tokens,
+            len(text),
+        )
         return text, tokens
 
     def rewrite(self, question: str, history: list[str], deadline: float):
@@ -116,6 +141,7 @@ class Pipeline:
         deadline = started + self.settings.request_timeout - 10
         prepared = self.retriever.prepared_answer(question)
         if prepared is not None:
+            log.info("answer_route route=faq seconds=%.3f", time.perf_counter() - started)
             return {
                 "answer": prepared,
                 "sources": [],
@@ -126,6 +152,7 @@ class Pipeline:
         query, rewrite_tokens = self.rewrite(question, history, deadline)
         ranked, rerank_tokens = self.rerank(query, self.retriever.candidates(query), deadline)
         selected = self.retriever.select_context(ranked)
+        log.info("context_selected chunks=%d", len(selected))
         links = self.retriever.best_links(query)
         links_text = "\n".join(f"- {x['description']}: {x['url']}" for x in links)
         history_text = "\n".join(history[-6:])

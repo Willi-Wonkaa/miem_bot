@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 from collections import defaultdict
 
@@ -36,10 +37,15 @@ class Retriever:
         self.settings = settings
         directory = current_generation(settings.index_dir)
         metadata = json.loads((directory / "metadata.json").read_text(encoding="utf-8"))
+        self.metadata = metadata
         if metadata["format_version"] != FORMAT_VERSION:
             raise ValueError("Unsupported index format; run indexer")
         if metadata["embed_model"] != settings.embed_model:
             raise ValueError("Embedding model changed; run indexer")
+        if metadata.get("quantized", False) != (
+            settings.embed_quantize and settings.embed_device == "cpu"
+        ):
+            raise ValueError("Embedding precision changed; run indexer")
         self.chunks = json.loads((directory / "chunks.json").read_text(encoding="utf-8"))
         self.links = json.loads((directory / "links.json").read_text(encoding="utf-8"))
         self.faq = json.loads((directory / "faq.json").read_text(encoding="utf-8"))
@@ -60,6 +66,12 @@ class Retriever:
             (chunk["document_id"], int(chunk["chunk_id"])): idx
             for idx, chunk in enumerate(self.chunks)
         }
+        logging.getLogger(__name__).info(
+            "retriever_ready chunks=%d faq=%d links=%d",
+            len(self.chunks),
+            len(self.faq),
+            len(self.links),
+        )
 
     def encode_query(self, question: str) -> np.ndarray:
         return self.embedder.encode(

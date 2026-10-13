@@ -225,5 +225,7 @@ __marimo__/
 .deploy/
 data/index/
 data/models/
+data/monitor/
+logs/
 *.pem
 *.key

@@ -19,3 +19,4 @@ docker compose up -d --wait --wait-timeout 300
 - [Структура и перенос из Colab](documentation/project.md)
 - [Запуск и обслуживание](documentation/operations.md)
 - [CI/CD и секреты Actions](documentation/ci-cd.md)
+- [Логи, служебный бот и статусы](documentation/monitoring.md)
