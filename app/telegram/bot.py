@@ -67,13 +67,7 @@ class MetricsMiddleware(BaseMiddleware):
 def coverage_note(coverage):
     if not coverage or coverage.get("complete"):
         return ""
-    files = coverage.get("files") or []
-    recent = "\n".join(f"• {name}" for name in files[-3:])
-    return (
-        f"\n\nБаза пополняется: доступно {coverage.get('indexed_files', 0)}/"
-        f"{coverage.get('total_files', 0)} файлов.\n"
-        + (f"Последние проиндексированные файлы:\n{recent}" if recent else "")
-    )
+    return "Ответ может быть неполным: база знаний сейчас обновляется."
 
 
 def create_dispatcher(
@@ -92,12 +86,11 @@ def create_dispatcher(
         response = await client.get("/index")
         response.raise_for_status()
         data = response.json()
-        progress = data.get("progress", {})
         coverage = data.get("coverage", {})
         await message.answer(
-            f"В рабочей базе: {coverage.get('indexed_files', 0)}/{coverage.get('total_files', 0)} файлов.\n"
-            f"Индексация: {progress.get('percent', 0):.1f}% ({progress.get('state', 'ожидание')}).\n"
-            + "\n".join((coverage.get("files") or [])[-10:])
+            "База знаний готова."
+            if coverage.get("complete")
+            else "База знаний обновляется. Можно продолжать задавать вопросы."
         )
 
     @dp.message(Command("index_watch"))
@@ -160,11 +153,13 @@ def create_dispatcher(
                 response.raise_for_status()
             result = response.json()
             answer_text = result["answer"]
-            for part in answer_parts(answer_text + coverage_note(result.get("coverage"))):
+            for part in answer_parts(answer_text):
                 try:
                     await message.answer(format_telegram_answer(part), parse_mode=ParseMode.HTML)
                 except TelegramBadRequest:
                     await message.answer(part, parse_mode=None)
+            if note := coverage_note(result.get("coverage")):
+                await message.answer(note)
             if result.get("route") != "warming":
                 await store.append(session, question, answer_text)
         except httpx.HTTPStatusError as error:
@@ -218,7 +213,7 @@ async def file_notifications(bot, telemetry):
         events = telemetry.events(cursor)
         files = [event["text"] for event in events if event["kind"] == "files"]
         if files:
-            text = "\n\n".join(files)
+            text = "База знаний обновлена. Можно продолжать задавать вопросы."
             for chat in telemetry.watchers():
                 try:
                     for part in answer_parts(text):

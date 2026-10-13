@@ -44,6 +44,9 @@ class Telemetry:
                   chat INTEGER, message INTEGER, run_id TEXT, received REAL, processed REAL,
                   success INTEGER, PRIMARY KEY(chat,message));
                 CREATE INDEX IF NOT EXISTS messages_received ON messages(received);
+                CREATE TABLE IF NOT EXISTS requests (
+                  id TEXT PRIMARY KEY, received REAL, completed REAL, success INTEGER);
+                CREATE INDEX IF NOT EXISTS requests_received ON requests(received);
                 CREATE TABLE IF NOT EXISTS subscribers (
                   chat INTEGER PRIMARY KEY, prefs TEXT NOT NULL, cursor INTEGER NOT NULL);
                 CREATE TABLE IF NOT EXISTS watchers (chat INTEGER PRIMARY KEY);
@@ -153,6 +156,33 @@ class Telemetry:
                 "INSERT OR IGNORE INTO subscribers VALUES (?,?,?)",
                 (chat, json.dumps(prefs), self.last_event()),
             )
+
+    def request_received(self):
+        request_id = uuid.uuid4().hex
+        with self.connection() as db:
+            db.execute("INSERT INTO requests VALUES (?,?,NULL,NULL)", (request_id, time.time()))
+        return request_id
+
+    def request_processed(self, request_id, success=True):
+        with self.connection() as db:
+            db.execute(
+                "UPDATE requests SET completed=?,success=? WHERE id=?",
+                (time.time(), int(success), request_id),
+            )
+
+    def request_stats(self, now=None):
+        now = now or time.time()
+        with self.connection() as db:
+            windows = {
+                str(minutes): db.execute(
+                    "SELECT COUNT(*) FROM requests WHERE received>=?", (now - minutes * 60,)
+                ).fetchone()[0]
+                for minutes in [1, 5, 30]
+            }
+            total = db.execute(
+                "SELECT COUNT(*), COUNT(completed), COALESCE(SUM(success=0),0) FROM requests"
+            ).fetchone()
+        return {"windows": windows, "received": total[0], "processed": total[1], "errors": total[2]}
 
     def subscribers(self):
         with self.connection() as db:

@@ -123,21 +123,13 @@ def create_app(settings: Settings | None = None, pipeline=None) -> FastAPI:
     @application.post("/answer", response_model=AnswerResponse)
     async def answer(request: AnswerRequest, authorization: str = Header(default="")):
         authenticate(authorization)
+        request_id = application.state.telemetry.request_received()
         live = application.state.live_index
         snapshot = live.snapshot() if live else None
-        if live is not None and snapshot is None:
-            return {
-                "answer": "База знаний сейчас готовится. Первые документы скоро станут доступны. "
-                "Команда /index покажет прогресс.",
-                "sources": [],
-                "route": "warming",
-                "tokens": 0,
-                "time_sec": 0,
-                "coverage": live.coverage(),
-            }
         try:
             await asyncio.wait_for(application.state.slots.acquire(), timeout=5)
         except TimeoutError:
+            application.state.telemetry.request_processed(request_id, success=False)
             raise HTTPException(status_code=429, detail="Server busy") from None
         try:
             active = application.state.pipeline or Pipeline(
@@ -146,6 +138,7 @@ def create_app(settings: Settings | None = None, pipeline=None) -> FastAPI:
             started = time.perf_counter()
             result = await run_in_threadpool(active.answer, request.question, request.history)
             result["coverage"] = live.coverage(snapshot) if live else {}
+            application.state.telemetry.request_processed(request_id)
             log.info(
                 "answer_completed route=%s seconds=%.3f tokens=%d",
                 result["route"],
@@ -154,6 +147,7 @@ def create_app(settings: Settings | None = None, pipeline=None) -> FastAPI:
             )
             return result
         except Exception:
+            application.state.telemetry.request_processed(request_id, success=False)
             log.exception("answer_generation_failed")
             application.state.telemetry.event(
                 "errors", "rag", "Ошибка генерации ответа. Подробности в rag.txt."

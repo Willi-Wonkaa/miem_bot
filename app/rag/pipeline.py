@@ -25,7 +25,7 @@ def parse_json_response(text: str) -> dict:
 
 
 class Pipeline:
-    def __init__(self, settings: Settings, retriever: Retriever, client=None):
+    def __init__(self, settings: Settings, retriever: Retriever | None, client=None):
         self.settings = settings
         self.retriever = retriever
         self.client = client or OpenAI(
@@ -139,6 +139,37 @@ class Pipeline:
     def answer(self, question: str, history: list[str]) -> dict:
         started = time.perf_counter()
         deadline = started + self.settings.request_timeout - 10
+        if self.retriever is None:
+            history_text = "\n".join(history[-6:])
+            answer, tokens = self.chat(
+                [
+                    {"role": "system", "content": FINAL_SYSTEM},
+                    {
+                        "role": "user",
+                        "content": (
+                            f"История диалога:\n{history_text or 'нет'}\n\n"
+                            "Материалы университета пока недоступны. Дай полезный ответ на вопрос "
+                            "в пределах достоверных сведений. Не выдумывай конкретные правила, "
+                            "сроки, контакты или ссылки. Если точных сведений недостаточно, "
+                            "объясни, что пользователю нужно уточнить. Не сообщай технический "
+                            "прогресс загрузки базы.\n\n"
+                            f"Вопрос пользователя:\n{question}"
+                        ),
+                    },
+                ],
+                max_tokens=1100,
+                temperature=0.3,
+                deadline=deadline,
+            )
+            if not answer:
+                raise ValueError("Generator returned an empty answer")
+            return {
+                "answer": answer,
+                "sources": [],
+                "route": "fallback",
+                "tokens": tokens,
+                "time_sec": round(time.perf_counter() - started, 3),
+            }
         prepared = self.retriever.prepared_answer(question)
         if prepared is not None:
             log.info("answer_route route=faq seconds=%.3f", time.perf_counter() - started)

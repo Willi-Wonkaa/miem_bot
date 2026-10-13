@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock
 
 import fakeredis.aioredis
 import httpx
+import pytest
 from aiogram import Bot
 from aiogram.methods import SendMessage
 from aiogram.types import Chat, Message, Update, User
@@ -44,7 +45,15 @@ def test_formatting_escapes_html_and_preserves_links():
     assert "max.ru" not in "".join(parts) and "https://www.hse.ru/" in "".join(parts)
 
 
-async def test_dispatcher_success_error_and_non_text():
+@pytest.mark.parametrize(
+    "coverage",
+    [
+        {"indexed_files": 1, "total_files": 205, "complete": False, "files": ["private.docx"]},
+        {"indexed_files": 0, "total_files": 0, "complete": False},
+        {"indexed_files": 205, "total_files": 205, "complete": True},
+    ],
+)
+async def test_dispatcher_success_error_and_non_text(coverage):
     redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
     store = HistoryStore(redis, 60, 600)
     sent = []
@@ -67,7 +76,9 @@ async def test_dispatcher_success_error_and_non_text():
 
     def transport(request):
         requests.append(request)
-        return httpx.Response(status, json={"answer": "**Ответ**", "route": "rag"})
+        return httpx.Response(
+            status, json={"answer": "**Ответ**", "route": "rag", "coverage": coverage}
+        )
 
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(transport), base_url="http://rag"
@@ -86,6 +97,14 @@ async def test_dispatcher_success_error_and_non_text():
 
         await feed("Что такое СОП")
         assert "<b>Ответ</b>" in sent
+        if not coverage["complete"]:
+            assert sent[-2] == "<b>Ответ</b>"
+            assert sent[-1] == "Ответ может быть неполным: база знаний сейчас обновляется."
+        else:
+            assert sent[-1] == "<b>Ответ</b>"
+        assert all(
+            "205" not in text and "0/0" not in text and "private.docx" not in text for text in sent
+        )
         assert len(await store.read("42:7")) == 2
         assert await redis.get("lock:42:7") is None
         status = 502

@@ -10,7 +10,13 @@ from zoneinfo import ZoneInfo
 from aiogram import Bot, Dispatcher, F
 from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandStart
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import (
+    BotCommand,
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 
 from app.config import Settings
 from app.logging_setup import setup_logging
@@ -42,6 +48,33 @@ def timestamp(value, timezone):
     return datetime.fromtimestamp(value, ZoneInfo(timezone)).strftime("%d.%m %H:%M:%S")
 
 
+def index_text(state):
+    progress = state.get("index_progress")
+    component = state.host().get("containers", {}).get("indexer", {})
+    if component.get("state") not in {None, "running"}:
+        if not progress:
+            return "Индексатор остановлен. Сохранённый прогресс отсутствует; проверьте ошибки."
+        if progress.get("state") not in {"completed", "completed_with_errors"}:
+            progress = {
+                **progress,
+                "state": "остановлен (последний сохранённый прогресс)",
+                "eta": None,
+            }
+    return index_status(progress)
+
+
+def requests_text(state):
+    stats = state.request_stats()
+    return (
+        "Запросы к системе\n"
+        f"За 1 минуту: {stats['windows']['1']}\n"
+        f"За 5 минут: {stats['windows']['5']}\n"
+        f"За 30 минут: {stats['windows']['30']}\n"
+        f"Всего: {stats['received']}\n"
+        f"Обработано: {stats['processed']}; ошибок: {stats['errors']}"
+    )
+
+
 def status_text(state, settings):
     lines = ["Состояние системы"]
     host = state.host()
@@ -64,18 +97,7 @@ def status_text(state, settings):
             f"Компонент {component['name']}: {component['state']}, "
             f"запуск {timestamp(component['started'], settings.timezone)}"
         )
-    progress = state.get("index_progress")
-    if progress and host.get("containers", {}).get("indexer", {}).get("state") not in {
-        None,
-        "running",
-    }:
-        if progress.get("state") not in {"completed", "completed_with_errors"}:
-            progress = {
-                **progress,
-                "state": "остановлен (последний сохранённый прогресс)",
-                "eta": None,
-            }
-    lines.extend(["", index_status(progress), ""])
+    lines.extend(["", index_text(state), "", requests_text(state), ""])
     stats = state.message_stats()
     lines.append(
         f"Сообщения за 1/5/30 минут: {stats['windows']['1']}/"
@@ -90,6 +112,8 @@ def status_text(state, settings):
 
 def keyboard(prefs):
     rows = [[InlineKeyboardButton(text="📊 Статус системы", callback_data="status")]]
+    rows.append([InlineKeyboardButton(text="Прогресс индексации", callback_data="index")])
+    rows.append([InlineKeyboardButton(text="Количество запросов", callback_data="requests")])
     for kind, label in {"all": "Все уведомления", **EVENT_TYPES}.items():
         rows.append(
             [
@@ -123,11 +147,24 @@ def create_dispatcher(state, settings):
             status_text(state, settings), reply_markup=keyboard(prefs(message.chat.id))
         )
 
-    @dp.callback_query(F.data == "status")
+    @dp.message(Command("index", "progress"), F.chat.type == "private")
+    async def index(message: Message):
+        await message.answer(index_text(state))
+
+    @dp.message(Command("requests", "stats"), F.chat.type == "private")
+    async def requests(message: Message):
+        await message.answer(requests_text(state))
+
+    @dp.callback_query(F.data.in_({"status", "index", "requests"}))
     async def status_button(query: CallbackQuery):
         if query.message and query.message.chat.type == "private":
+            text = {
+                "status": lambda: status_text(state, settings),
+                "index": lambda: index_text(state),
+                "requests": lambda: requests_text(state),
+            }[query.data]()
             await query.message.edit_text(
-                status_text(state, settings), reply_markup=keyboard(prefs(query.message.chat.id))
+                text, reply_markup=keyboard(prefs(query.message.chat.id))
             )
         await query.answer()
 
@@ -172,14 +209,10 @@ async def monitor(bot, state, settings, run_id):
                         previous[name] = identity
                 state.put("docker_seen", previous)
             if time.monotonic() >= next_report:
-                stats = state.message_stats()
                 state.event(
                     "traffic",
                     "bot",
-                    "Получено сообщений:\n"
-                    f"1 минута: {stats['windows']['1']}\n5 минут: {stats['windows']['5']}\n"
-                    f"30 минут: {stats['windows']['30']}\n"
-                    f"С запуска: {stats['received']}; обработано: {stats['processed']}",
+                    requests_text(state),
                 )
                 next_report = time.monotonic() + settings.service_report_seconds
             for subscriber in state.subscribers():
@@ -208,6 +241,14 @@ async def main():
     state.component("service", "starting", run_id)
     async with Bot(token=settings.service_bot_token.get_secret_value()) as bot:
         await bot.get_me()
+        await bot.set_my_commands(
+            [
+                BotCommand(command="start", description="Включить уведомления"),
+                BotCommand(command="status", description="Состояние системы"),
+                BotCommand(command="index", description="Прогресс индексации"),
+                BotCommand(command="requests", description="Количество запросов"),
+            ]
+        )
         dp = create_dispatcher(state, settings)
         task = asyncio.create_task(monitor(bot, state, settings, run_id))
         log.info("service_polling_started")

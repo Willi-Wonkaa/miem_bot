@@ -25,6 +25,13 @@ for filename in MIEM_knowledge_base_unified.zip HSE_Answers_RU.xlsx; do
     cp "$target/data/raw/$filename" "$root/shared/raw/$filename"
   fi
 done
+# The indexer runs as UID 10001; bootstrap's deployment-only mode 750 blocks it.
+chmod 755 "$root/shared/raw"
+for filename in MIEM_knowledge_base_unified.zip HSE_Answers_RU.xlsx; do
+  if [[ -f "$root/shared/raw/$filename" ]]; then
+    chmod 644 "$root/shared/raw/$filename"
+  fi
+done
 if [[ ! -f "$root/shared/.env" || ! -f "$root/shared/raw/MIEM_knowledge_base_unified.zip" ]]; then
   echo "Deployment needs shared/.env and shared/raw/MIEM_knowledge_base_unified.zip" >&2
   exit 1
@@ -59,6 +66,8 @@ compose=(docker compose --project-name miem-bot --project-directory "$target"
   -f "$target/compose.yaml" -f "$target/compose.server.yaml")
 "${compose[@]}" config --quiet
 "${compose[@]}" build bot rag
+"${compose[@]}" --profile index run --rm --no-deps --entrypoint python indexer -c \
+  'import json,zipfile; from pathlib import Path; p=Path("/data/raw/MIEM_knowledge_base_unified.zip"); z=zipfile.ZipFile(p); m=[n for n in z.namelist() if Path(n).name=="manifest.json"]; assert len(m)==1, "Expected one manifest"; docs=json.loads(z.read(m[0]))["documents"]; assert docs, "Empty corpus"; faq=Path("/data/raw/HSE_Answers_RU.xlsx"); assert not faq.exists() or faq.open("rb").read(1); print("Readable source documents:", len(docs))'
 docker run --rm --user 0 --entrypoint python \
   -v "$root/shared/logs:/data/logs" "miem-bot:$release" \
   -c 'import os; os.chown("/data/logs",10001,10001); os.chmod("/data/logs",0o755)'
@@ -102,7 +111,25 @@ if [[ "$mode" == index ]]; then
     docker rm miem-bot-indexer >/dev/null
   fi
   "${compose[@]}" --profile index run -d --no-deps --name miem-bot-indexer indexer
-  "${compose[@]}" exec -T rag python -m app.rag.smoke --require-index --timeout 1800
+  # Fail promptly if the writer exits before its first publication.
+  ready=false
+  deadline=$((SECONDS + 1800))
+  while (( SECONDS < deadline )); do
+    if "${compose[@]}" exec -T rag python -m app.rag.smoke --require-index --timeout 1; then
+      ready=true
+      break
+    fi
+    if [[ "$(docker inspect --format '{{.State.Running}}' miem-bot-indexer)" != true ]]; then
+      docker logs --tail 100 miem-bot-indexer
+      echo "Indexer stopped before the first searchable publication" >&2
+      exit 1
+    fi
+    sleep 10
+  done
+  if [[ "$ready" != true ]]; then
+    echo "First searchable publication was not ready within 30 minutes" >&2
+    exit 1
+  fi
   docker logs --follow miem-bot-indexer
   status=$(docker wait miem-bot-indexer)
   if [[ "$status" != 0 ]]; then
@@ -110,5 +137,5 @@ if [[ "$mode" == index ]]; then
     exit 1
   fi
   "${compose[@]}" exec -T rag python -m app.rag.smoke --require-complete --timeout 120 \
-    --question "Как найти расписание занятий?"
+    --question "Where can I find the class timetable at MIEM?"
 fi

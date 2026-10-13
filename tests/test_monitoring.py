@@ -73,6 +73,23 @@ def test_notification_preferences_survive_restart_and_are_per_chat(tmp_path):
     assert restarted.toggle(1, "all")["all"] is False
     callbacks = [row[0].callback_data for row in keyboard(changed).inline_keyboard]
     assert "status" in callbacks and "toggle:all" in callbacks and "toggle:traffic" in callbacks
+    assert "index" in callbacks and "requests" in callbacks
+
+
+def test_request_counters_survive_restart_and_track_failures(tmp_path):
+    state = Telemetry(tmp_path)
+    first = state.request_received()
+    second = state.request_received()
+    state.request_processed(first)
+    state.request_processed(second, success=False)
+    state.request_processed(first)
+    restarted = Telemetry(tmp_path)
+    assert restarted.request_stats() == {
+        "windows": {"1": 2, "5": 2, "30": 2},
+        "received": 2,
+        "processed": 2,
+        "errors": 1,
+    }
 
 
 def test_resource_budget_reserves_headroom_and_uses_at_most_80_percent():
@@ -116,4 +133,31 @@ async def test_service_bot_activation_and_status(tmp_path):
     assert "Служебный бот активирован" in replies[-1].text
     assert replies[-1].reply_markup.inline_keyboard[0][0].callback_data == "status"
     assert "С запуска основного бота" in status_text(state, settings)
+    state.put(
+        "index_progress",
+        {
+            "state": "indexing",
+            "done": 1,
+            "total": 205,
+            "percent": 0.5,
+            "remaining": 204,
+            "current_file": "example.docx",
+        },
+    )
+    await dispatcher.feed_update(
+        bot,
+        Update(
+            update_id=2, message=message.model_copy(update={"message_id": 2, "text": "/index"})
+        ),
+    )
+    assert "1/205" in replies[-1].text and "example.docx" in replies[-1].text
+    request_id = state.request_received()
+    state.request_processed(request_id)
+    await dispatcher.feed_update(
+        bot,
+        Update(
+            update_id=3, message=message.model_copy(update={"message_id": 3, "text": "/requests"})
+        ),
+    )
+    assert "Всего: 1" in replies[-1].text and "Обработано: 1" in replies[-1].text
     await bot.session.close()

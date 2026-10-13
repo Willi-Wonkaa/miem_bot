@@ -27,4 +27,5 @@ chmod 600 /home/miem-deploy/.ssh/authorized_keys
 install -d -m 750 -o miem-deploy -g miem-deploy \
   /opt/miem-bot /opt/miem-bot/releases /opt/miem-bot/incoming \
   /opt/miem-bot/shared /opt/miem-bot/shared/raw
+chmod 755 /opt/miem-bot/shared/raw
 echo "Bootstrap complete"

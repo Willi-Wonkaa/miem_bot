@@ -2,6 +2,8 @@ import json
 import threading
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
@@ -139,7 +141,7 @@ def test_invalid_publication_keeps_last_consistent_copy(corpus):
     assert live.snapshot() is before
 
 
-def test_api_works_while_first_index_is_not_yet_published(tmp_path):
+def test_api_works_while_first_index_is_not_yet_published(tmp_path, monkeypatch):
     settings = Settings(
         _env_file=None,
         index_dir=tmp_path / "index",
@@ -148,6 +150,12 @@ def test_api_works_while_first_index_is_not_yet_published(tmp_path):
         polza_api_key="test-key",
         rag_api_token="test-internal",
     )
+    llm = Mock()
+    llm.chat.completions.create.return_value = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content="Уточните в библиотеке."))],
+        usage=SimpleNamespace(total_tokens=12),
+    )
+    monkeypatch.setattr("app.rag.api.OpenAI", lambda **kwargs: llm)
     with TestClient(create_app(settings)) as client:
         assert client.get("/health").json() == {"status": "ok", "index_ready": False}
         response = client.post(
@@ -155,7 +163,12 @@ def test_api_works_while_first_index_is_not_yet_published(tmp_path):
             headers={"Authorization": "Bearer test-internal"},
             json={"question": "Как получить книгу?"},
         )
-        assert response.status_code == 200 and response.json()["route"] == "warming"
+        assert response.status_code == 200 and response.json()["route"] == "fallback"
+        assert response.json()["answer"] == "Уточните в библиотеке."
+        assert response.json()["tokens"] == 12 and response.json()["sources"] == []
+        assert response.json()["coverage"]["complete"] is False
+        llm.chat.completions.create.assert_called_once()
+        assert client.app.state.telemetry.request_stats()["received"] == 1
         assert (
             client.get("/index", headers={"Authorization": "Bearer test-internal"}).status_code
             == 200
