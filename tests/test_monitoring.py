@@ -10,7 +10,7 @@ from aiogram.methods import SendMessage
 from aiogram.types import Chat, Message, Update, User
 
 from app.config import Settings
-from app.host_monitor import budget
+from app.host_monitor import budget, cgroup_memory, memory_pressure
 from app.logging_setup import setup_logging
 from app.service.bot import create_dispatcher, keyboard, monitor, status_text
 from app.telemetry import Telemetry
@@ -80,6 +80,10 @@ def test_notification_preferences_survive_restart_and_are_per_chat(tmp_path):
     ]
     assert "status" in callbacks and "toggle:all" in callbacks and "toggle:traffic" in callbacks
     assert "index" in callbacks and "requests" in callbacks
+    buttons = {button.callback_data: button.text
+               for row in keyboard(changed, "notifications").inline_keyboard for button in row}
+    assert buttons["toggle:files"].startswith("🟢")
+    assert buttons["toggle:traffic"].startswith("🔴")
 
 
 def test_request_counters_survive_restart_and_track_failures(tmp_path):
@@ -106,6 +110,17 @@ def test_resource_budget_reserves_headroom_and_uses_at_most_80_percent():
     assert budget(3, 0, 8 * gib, 0)["cpus"] == 0
     assert budget(3, 0, 8 * gib, 0)["memory"] == 0
     assert budget(3, 0.061, 8 * gib, 5 * gib)["cpus"] <= 0.061 * 0.8
+
+
+def test_reclaimable_cache_and_cpu_contention_do_not_request_a_memory_stop(tmp_path):
+    gib = 1024**3
+    (tmp_path / "memory.current").write_text(str(2 * gib))
+    (tmp_path / "memory.stat").write_text(f"inactive_file {gib}\nanon {gib}\n")
+    usage, working_set = cgroup_memory(tmp_path)
+    assert usage == 2 * gib and working_set == gib
+    limits = {"memory": int(1.5 * gib), "cpus": 0}
+    assert not memory_pressure(limits, working_set)
+    assert memory_pressure(limits, int(1.45 * gib))
 
 
 async def test_service_bot_activation_and_status(tmp_path):

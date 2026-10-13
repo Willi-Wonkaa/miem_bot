@@ -106,6 +106,19 @@ if [[ "$mode" == index ]]; then
   if docker inspect miem-bot-indexer >/dev/null 2>&1; then
     if [[ "$(docker inspect --format '{{.State.Running}}' miem-bot-indexer)" == true ]]; then
       if [[ "$(docker inspect --format '{{.Config.Image}}' miem-bot-indexer)" != "miem-rag:$release" ]]; then
+        stopped_id=$(docker inspect --format '{{.Id}}' miem-bot-indexer)
+        python3 - "$root/shared/host/indexer-stop.json" "${stopped_id:0:12}" <<'PY'
+import json, os, sys, tempfile, time
+from pathlib import Path
+path = Path(sys.argv[1])
+with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, delete=False) as stream:
+    json.dump({'container_id':sys.argv[2], 'kind':'deploy',
+               'reason':'Обновление версии системы; прогресс сохранён для продолжения.',
+               'updated':time.time()}, stream)
+    temporary = Path(stream.name)
+temporary.chmod(0o644)
+os.replace(temporary, path)
+PY
         docker stop --timeout 60 miem-bot-indexer >/dev/null
       fi
     fi

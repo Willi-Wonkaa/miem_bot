@@ -73,7 +73,7 @@ class Telemetry:
         with self.connection() as db:
             db.execute("INSERT OR REPLACE INTO kv VALUES (?,?)", (key, json.dumps(value)))
 
-    def component(self, name, state="ready", run_id=None, detail=""):
+    def component(self, name, state="ready", run_id=None, detail="", notify=True):
         now = time.time()
         with self.connection() as db:
             old = db.execute("SELECT * FROM components WHERE name=?", (name,)).fetchone()
@@ -84,7 +84,7 @@ class Telemetry:
                 "INSERT OR REPLACE INTO components VALUES (?,?,?,?,?,?)",
                 (name, run_id, state, started, now, detail),
             )
-        if changed:
+        if changed and notify:
             self.event(
                 "errors"
                 if state in {"failed", "interrupted", "completed_with_errors"}

@@ -65,9 +65,11 @@ services:
       INDEX_PARSE_WORKERS: ${INDEX_PARSE_WORKERS:-2}
       INDEX_WORKERS: ${INDEX_WORKERS:-3}
       INDEX_ESTIMATED_CHUNKS_PER_SECOND: ${INDEX_ESTIMATED_CHUNKS_PER_SECOND:-0.5}
+      INDEX_CONTROL_DIR: /data/host
       INDEX_PUBLISH_PERCENT: ${INDEX_PUBLISH_PERCENT:-5}
     volumes:
       - ./data/raw:/data/raw:ro
+      - ./host-monitor:/data/host:ro
       - index-data:/data/index
       - model-cache:/data/models
       - monitor-data:/data/monitor

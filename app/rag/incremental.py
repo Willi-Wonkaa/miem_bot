@@ -7,6 +7,7 @@ import math
 import multiprocessing
 import os
 import signal
+import socket
 import threading
 import time
 import uuid
@@ -33,6 +34,7 @@ from app.rag.indexing import (
 )
 from app.rag.parser_worker import parse_document
 from app.rag.storage import atomic_array, atomic_json, read_json, sync_directory
+from app.rag.timing import IndexTiming
 from app.telemetry import Telemetry, duration
 
 log = logging.getLogger(__name__)
@@ -51,6 +53,8 @@ class IncrementalIndexer:
         self.telemetry = Telemetry(settings.monitor_dir)
         self.run_id = uuid.uuid4().hex
         self.started = time.monotonic()
+        self.started_at = time.time()
+        self.timing = IndexTiming(self.started)
         self.previous_elapsed = 0
         self.documents = []
         self.completed = []
@@ -80,6 +84,12 @@ class IncrementalIndexer:
         self.initial_eta = None
         self.analysis_complete = False
         self.cached_units = 0
+        self.cached_doc_units = 0
+        self.cached_aux_units = 0
+        self.reused_doc_units = 0
+        self.reused_aux_units = 0
+        self.stop_reason = ""
+        self.stop_kind = ""
         self.resume_generation = None
         self.resume_published_files = 0
         self.reused_complete = False
@@ -95,20 +105,22 @@ class IncrementalIndexer:
         known = sum(self.parsed.values())
         units = known + self.aux_total
         processed_units = self.encoded_total + self.aux_encoded
-        active_elapsed = time.monotonic() - self.indexing_started if self.indexing_started else 0
-        rate = self.encoded_now / active_elapsed if self.encoded_now and active_elapsed > 5 else 0
-        estimate_rate = rate or self.settings.index_estimated_chunks_per_second
-        cached_remaining = max(0, self.cached_units - (processed_units - self.encoded_now))
-        eta = (
-            max(0, units - processed_units - cached_remaining) / estimate_rate
-            if self.analysis_complete
-            else None
-        )
+        remaining_doc = max(0, known - self.encoded_total - max(
+            0, self.cached_doc_units - self.reused_doc_units))
+        remaining_aux = max(0, self.aux_total - self.aux_encoded - max(
+            0, self.cached_aux_units - self.reused_aux_units))
+        per_worker_rate = self.settings.index_estimated_chunks_per_second
+        worker_count = 1 if self.state == "extras" else max(1, len(self.workers))
+        rate = self.timing.rate(per_worker_rate * worker_count)
+        eta = None
+        if self.analysis_complete and rate > 0:
+            eta = ((remaining_doc + remaining_aux) / rate if self.state == "extras"
+                   else remaining_doc / rate + remaining_aux / per_worker_rate)
         if self.state in {"completed", "completed_with_errors"}:
             eta = 0
         elif self.state == "interrupted":
             eta = None
-        elapsed = self.previous_elapsed + time.monotonic() - self.started
+        elapsed = self.timing.elapsed()
         payload = {
             "run_id": self.run_id,
             "start_id": self.settings.index_start_id,
@@ -120,6 +132,11 @@ class IncrementalIndexer:
             "remaining": remaining,
             "percent": min(100, 100 * processed_units / units) if units else 0,
             "elapsed": elapsed,
+            "elapsed_total": self.previous_elapsed + elapsed,
+            "started_at": self.started_at,
+            "speed": rate,
+            "stop_reason": self.stop_reason,
+            "stop_kind": self.stop_kind,
             "eta": eta,
             "parsed_files": total if self.reused_complete else len(self.parsed),
             "known_chunks": known,
@@ -153,6 +170,16 @@ class IncrementalIndexer:
                 f"Общий объём: {units} фрагментов и дополнительных записей\n"
                 f"Прошло {duration(elapsed)}; осталось ≈ {duration(eta)}"
             )
+            if self.state == "interrupted":
+                text = (
+                    "Индексация приостановлена.\n"
+                    f"Причина: {self.stop_reason or 'процесс получил сигнал остановки'}\n"
+                    f"Документы: {done}/{total}; ошибок: {len(self.failed)}\n"
+                    f"Общий прогресс: {payload['percent']:.1f}%\n"
+                    f"Время этого запуска: {duration(elapsed)}. Прогресс сохранён."
+                )
+                if self.stop_kind == "resource_pressure":
+                    text += "\nОбработка возобновится автоматически после освобождения ресурсов."
             self.telemetry.event("indexer", "indexer", text, payload)
             self.last_notice = time.monotonic()
         log.info(
@@ -185,7 +212,21 @@ class IncrementalIndexer:
             if computed:
                 self.encoded_now += count
                 self.encoding_seconds += seconds
+                self.timing.record(count)
+            elif auxiliary:
+                self.reused_aux_units += count
+            else:
+                self.reused_doc_units += count
             self.progress()
+
+    def request_stop(self, *_):
+        self.stop_requested = True
+        self.stop_reason = "Процесс получил сигнал остановки"
+        request = read_json(self.settings.index_control_dir / "indexer-stop.json", {})
+        if (request.get("updated", 0) >= self.started_at
+                and request.get("container_id") == socket.gethostname()):
+            self.stop_reason = request.get("reason", self.stop_reason)
+            self.stop_kind = request.get("kind", "")
 
     def checkpoint(self, meta, path):
         digest = hashlib.sha256(encoding_signature(self.settings).encode())
@@ -237,6 +278,8 @@ class IncrementalIndexer:
                 model = self.model()
                 if self.indexing_started is None:
                     self.indexing_started = time.monotonic()
+                with self.progress_lock:
+                    self.timing.begin_encoding()
                 before = time.monotonic()
                 vectors = encode_passages(model, batch, batch_size)
                 seconds = time.monotonic() - before
@@ -455,23 +498,6 @@ class IncrementalIndexer:
         self.planned_faq = read_faq(self.settings.faq_path)
         self.aux_total = len(self.planned_links) + len(self.planned_faq)
         self.analysis_complete = True
-        for meta, _, checkpoint in jobs:
-            count = self.parsed.get(meta["document_id"], 0)
-            if count and self.cached_vectors(checkpoint / "vectors.npy", count):
-                self.cached_units += count
-        for label, rows in [("links", self.planned_links), ("faq", self.planned_faq)]:
-            digest = hashlib.sha256(
-                (
-                    encoding_signature(self.settings) + label + json.dumps(rows, ensure_ascii=False)
-                ).encode()
-            ).hexdigest()
-            if rows and self.cached_vectors(
-                self.settings.index_dir / "checkpoints" / digest / "vectors.npy", len(rows)
-            ):
-                self.cached_units += len(rows)
-        self.initial_eta = (
-            sum(self.parsed.values()) + self.aux_total - self.cached_units
-        ) / self.settings.index_estimated_chunks_per_second
         jobs = [job for job in jobs if job[0]["file"] not in self.failed]
         if not jobs:
             raise ValueError("No document could be parsed")
@@ -479,6 +505,24 @@ class IncrementalIndexer:
             str(index + 1): {"state": "starting", "done": 0}
             for index in range(min(self.settings.index_workers, len(jobs)))
         }
+        batch_size = max(1, self.settings.embed_batch_size // len(self.workers))
+        for meta, _, checkpoint in jobs:
+            count = self.parsed.get(meta["document_id"], 0)
+            self.cached_doc_units += self.cached_count(checkpoint, count, batch_size)
+        for label, rows in [("links", self.planned_links), ("faq", self.planned_faq)]:
+            digest = hashlib.sha256(
+                (
+                    encoding_signature(self.settings) + label + json.dumps(rows, ensure_ascii=False)
+                ).encode()
+            ).hexdigest()
+            self.cached_aux_units += self.cached_count(
+                self.settings.index_dir / "checkpoints" / digest, len(rows), batch_size)
+        self.cached_units = self.cached_doc_units + self.cached_aux_units
+        per_worker_rate = self.settings.index_estimated_chunks_per_second
+        self.initial_eta = (
+            (sum(self.parsed.values()) - self.cached_doc_units) / (per_worker_rate * len(self.workers))
+            + (self.aux_total - self.cached_aux_units) / per_worker_rate
+        )
         self.state = "indexing"
         self.progress()
         self.telemetry.event(
@@ -500,6 +544,15 @@ class IncrementalIndexer:
             return vectors.ndim == 2 and len(vectors) == count and np.isfinite(vectors).all()
         except (OSError, ValueError):
             return False
+
+    def cached_count(self, directory, count, batch_size):
+        if self.cached_vectors(directory / "vectors.npy", count):
+            return count
+        return sum(
+            min(batch_size, count - start)
+            for start in range(0, count, batch_size)
+            if self.cached_vectors(directory / f"batch-{start:08d}.npy", min(batch_size, count - start))
+        )
 
     def encode_worker(self, worker_id, pending, results, first_job):
         job = first_job
@@ -575,7 +628,7 @@ class IncrementalIndexer:
         self.work = self.settings.index_dir / "work" / self.build_hash
         self.work.mkdir(parents=True, exist_ok=True)
         previous = read_json(self.work / "progress.json", {})
-        self.previous_elapsed = previous.get("elapsed", 0)
+        self.previous_elapsed = previous.get("elapsed_total", previous.get("elapsed", 0))
         try:
             directory = current_generation(self.settings.index_dir)
             metadata = read_json(directory / "metadata.json", {})
@@ -644,7 +697,7 @@ class IncrementalIndexer:
         if multiprocessing.current_process().name == "MainProcess":
             if threading.current_thread() is threading.main_thread():
                 old_handler = signal.signal(
-                    signal.SIGTERM, lambda *_: setattr(self, "stop_requested", True)
+                    signal.SIGTERM, self.request_stop
                 )
         pool = ProcessPoolExecutor(
             max_workers=self.settings.index_parse_workers,
@@ -663,7 +716,7 @@ class IncrementalIndexer:
             self.state = "completed" if not self.failed else "completed_with_errors"
             directory = self.publish(complete=not self.failed and self.extras_ready)
             self.progress()
-            elapsed = self.previous_elapsed + time.monotonic() - self.started
+            elapsed = self.timing.elapsed()
             self.telemetry.event(
                 "completion",
                 "indexer",
@@ -675,13 +728,13 @@ class IncrementalIndexer:
                 + f"\nДокументов обработано: {len(self.completed)}/{len(self.documents)}. "
                 f"Ошибок: {len(self.failed)}.\nВремя: {duration(elapsed)}",
             )
-            self.telemetry.component("indexer", self.state, self.run_id)
+            self.telemetry.component("indexer", self.state, self.run_id, notify=False)
             return directory
         except BaseException:
             self.state = "interrupted"
             self.publish()
             self.progress(notify=True)
-            self.telemetry.component("indexer", "interrupted", self.run_id)
+            self.telemetry.component("indexer", "interrupted", self.run_id, notify=False)
             raise
         finally:
             if pool is not None:

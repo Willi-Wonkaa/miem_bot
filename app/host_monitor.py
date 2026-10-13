@@ -83,6 +83,16 @@ def atomic_json(path, payload):
     os.replace(temporary, path)
 
 
+def cgroup_memory(directory):
+    usage = int((directory / "memory.current").read_text())
+    stats = dict(line.split() for line in (directory / "memory.stat").read_text().splitlines())
+    return usage, max(0, usage - int(stats.get("inactive_file", 0)))
+
+
+def memory_pressure(limits, working_set):
+    return limits["memory"] < working_set + 128 * 1024**2
+
+
 def collect(project):
     containers = {}
     ids = command(
@@ -108,6 +118,7 @@ def collect(project):
             "health": state.get("Health", {}).get("Status", "—"),
             "started": state["StartedAt"],
             "exit_code": state["ExitCode"],
+            "oom_killed": state.get("OOMKilled", False),
         }
         if service not in containers or item["state"] == "running":
             containers[service] = item
@@ -148,7 +159,7 @@ def main():
             total_ram, free_ram = memory()
             containers = collect(args.project)
             indexer = containers.get("indexer", {})
-            indexer_cpu, indexer_ram = 0.0, 0
+            indexer_cpu, indexer_ram, indexer_working_set = 0.0, 0, 0
             if indexer.get("state") == "running":
                 stats = json.loads(
                     command(
@@ -163,18 +174,18 @@ def main():
                         for line in Path(f"/proc/{pid}/cgroup").read_text().splitlines()
                         if line.startswith("0:")
                     )
-                    indexer_ram = int(
-                        (Path("/sys/fs/cgroup") / cgroup.lstrip("/") / "memory.current").read_text()
-                    )
+                    indexer_ram, indexer_working_set = cgroup_memory(
+                        Path("/sys/fs/cgroup") / cgroup.lstrip("/"))
                 except (OSError, StopIteration):
                     indexer_ram = memory_usage(stats["MemUsage"])
+                    indexer_working_set = indexer_ram
             limits = budget(
                 total_cpu,
                 idle_cpu,
                 total_ram,
                 free_ram,
                 indexer_cpu,
-                indexer_ram,
+                indexer_working_set,
                 args.reserve_cpu,
                 args.reserve_ram,
             )
@@ -192,11 +203,25 @@ def main():
                 next_resume = time.monotonic() + 120
                 paused = {}
                 pause_path.unlink(missing_ok=True)
+                (args.directory / "indexer-stop.json").unlink(missing_ok=True)
                 log.info("indexer_resumed_from_checkpoints")
             if indexer.get("state") == "running":
                 # Checkpoint and stop rather than violate the resource reserve or force a cgroup OOM.
-                if limits["memory"] < indexer_ram + 128 * 1024**2 or limits["cpus"] < 0.05:
-                    log.warning("indexer_resource_pressure; requesting checkpointed stop")
+                if memory_pressure(limits, indexer_working_set):
+                    reason = (
+                        f"Монитор памяти: рабочая память индексатора {indexer_working_set / 1024**3:.2f} ГБ, "
+                        f"доступный лимит {limits['memory'] / 1024**3:.2f} ГБ; нужен запас 128 МБ."
+                    )
+                    atomic_json(args.directory / "indexer-stop.json", {
+                        "container_id": indexer["id"], "kind": "resource_pressure",
+                        "reason": reason, "updated": time.time(),
+                        "memory_current": indexer_ram, "working_set": indexer_working_set,
+                        "memory_budget": limits["memory"], "available_ram": free_ram,
+                    })
+                    log.warning(
+                        "indexer_resource_pressure reason=memory usage=%d working_set=%d budget=%d available=%d; requesting checkpointed stop",
+                        indexer_ram, indexer_working_set, limits["memory"], free_ram,
+                    )
                     subprocess.run(
                         ["docker", "stop", "--timeout", "60", indexer["id"]],
                         check=True,
@@ -209,6 +234,8 @@ def main():
                     atomic_json(pause_path, paused)
                     continue
                 memory_limit = limits["memory"]
+                # CPU contention is temporary: throttle instead of restarting the embedding model.
+                limits["cpus"] = max(0.05, limits["cpus"])
                 desired = (indexer["id"], limits["cpus"], memory_limit // (64 * 1024**2))
                 if desired != applied:
                     command(

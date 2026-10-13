@@ -75,10 +75,12 @@ def index_status(progress):
     lines.extend(
         [
             "",
-            f"Прошло: {duration(progress.get('elapsed'))}",
+            f"Прошло с запуска: {duration(progress.get('elapsed'))}",
             f"Осталось примерно: {duration(progress.get('eta'))}",
         ]
     )
+    if progress.get("stop_reason"):
+        lines.extend(["", "Причина остановки: " + progress["stop_reason"]])
     return "\n".join(lines)
 
 
@@ -92,11 +94,12 @@ def timestamp(value, timezone):
 
 def index_text(state):
     progress = state.get("index_progress")
-    component = state.host().get("containers", {}).get("indexer", {})
-    if component.get("state") not in {None, "running"}:
+    host = state.host()
+    component = host.get("containers", {}).get("indexer", {})
+    if time.time() - host.get("updated", 0) < 60 and component.get("state") not in {None, "running"}:
         if not progress:
             return "Индексатор остановлен. Сохранённый прогресс отсутствует; проверьте ошибки."
-        if progress.get("state") not in {"completed", "completed_with_errors"}:
+        if progress.get("state") not in {"completed", "completed_with_errors", "interrupted"}:
             progress = {
                 **progress,
                 "state": "остановлен (последний сохранённый прогресс)",
@@ -197,7 +200,7 @@ def keyboard(prefs, view="status"):
             rows.append(
                 [
                     InlineKeyboardButton(
-                        text=f"{label}: {'вкл' if prefs.get(kind, True) else 'выкл'}",
+                        text=f"{'🟢' if prefs.get(kind, True) else '🔴'} {label}",
                         callback_data=f"toggle:{kind}",
                     )
                 ]
@@ -300,6 +303,9 @@ async def monitor(bot, state, settings, run_id):
                         component.get("health"),
                     ]
                     if identity != previous.get(name):
+                        if name == "indexer" and component.get("state") == "exited" and state.get("index_progress", {}).get("state") == "interrupted":
+                            previous[name] = identity
+                            continue
                         if (
                             name == "indexer"
                             and component.get("state") == "exited"
@@ -324,6 +330,9 @@ async def monitor(bot, state, settings, run_id):
                 next_report = time.monotonic() + settings.service_report_seconds
             for subscriber in state.subscribers():
                 for event in state.events(subscriber["cursor"], limit=25):
+                    if event["component"] == "indexer" and event["text"].startswith("indexer: interrupted"):
+                        state.advance(subscriber["chat"], event["id"])
+                        continue
                     prefs = subscriber["prefs"]
                     if prefs.get("all") and prefs.get(event["kind"], event["kind"] == "completion"):
                         try:
