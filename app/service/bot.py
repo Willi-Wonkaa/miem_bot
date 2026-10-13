@@ -163,9 +163,7 @@ def create_dispatcher(state, settings):
                 "index": lambda: index_text(state),
                 "requests": lambda: requests_text(state),
             }[query.data]()
-            await query.message.edit_text(
-                text, reply_markup=keyboard(prefs(query.message.chat.id))
-            )
+            await query.message.edit_text(text, reply_markup=keyboard(prefs(query.message.chat.id)))
         await query.answer()
 
     @dp.callback_query(F.data.startswith("toggle:"))

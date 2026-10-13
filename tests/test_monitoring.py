@@ -146,9 +146,7 @@ async def test_service_bot_activation_and_status(tmp_path):
     )
     await dispatcher.feed_update(
         bot,
-        Update(
-            update_id=2, message=message.model_copy(update={"message_id": 2, "text": "/index"})
-        ),
+        Update(update_id=2, message=message.model_copy(update={"message_id": 2, "text": "/index"})),
     )
     assert "1/205" in replies[-1].text and "example.docx" in replies[-1].text
     request_id = state.request_received()
