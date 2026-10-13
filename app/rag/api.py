@@ -76,12 +76,6 @@ def create_app(settings: Settings | None = None, pipeline=None) -> FastAPI:
                     changed = await asyncio.to_thread(live.refresh)
                     if changed:
                         state.component("rag-model", "ready", run_id, settings.embed_model)
-                        state.event(
-                            "startup",
-                            "rag-index",
-                            "Рабочая версия индекса загружена: "
-                            f"{live.current.metadata.get('indexed_files', 0)} файлов.",
-                        )
                 state.component("rag", "ready", run_id)
                 await asyncio.sleep(settings.index_reload_seconds)
 

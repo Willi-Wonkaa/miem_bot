@@ -9,7 +9,7 @@ import httpx
 from app.config import Settings
 
 
-def check(client, require_index=False, require_complete=False):
+def check(client, require_index=False, require_complete=False, require_workers=False, start_id=None):
     health = client.get("/health")
     health.raise_for_status()
     if health.json().get("status") != "ok":
@@ -23,12 +23,22 @@ def check(client, require_index=False, require_complete=False):
         raise ValueError("RAG API did not reject invalid credentials")
     response = client.get("/index")
     response.raise_for_status()
-    coverage = response.json()["coverage"]
-    if require_index or require_complete:
+    data = response.json()
+    coverage = data["coverage"]
+    if require_index or require_complete or require_workers:
         if not health.json().get("index_ready") or coverage.get("indexed_files", 0) < 1:
             raise ValueError("Waiting for the first searchable index")
     if require_complete and not coverage.get("complete"):
         raise ValueError("Index is incomplete; inspect indexing errors and saved checkpoints")
+    if require_workers:
+        progress = data.get("progress", {})
+        if start_id and progress.get("start_id") != start_id:
+            raise ValueError("Waiting for this indexer run, not a previous run")
+        complete_reused = progress.get("reused_complete") and coverage.get("complete")
+        workers_ready = (progress.get("startup_ready") and progress.get("workers_total", 0) > 0
+                         and progress.get("workers_ready") == progress.get("workers_total"))
+        if not progress.get("analysis_complete") or not (workers_ready or complete_reused):
+            raise ValueError("Waiting for every indexer to process its first document")
     return coverage
 
 
@@ -36,6 +46,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--require-index", action="store_true")
     parser.add_argument("--require-complete", action="store_true")
+    parser.add_argument("--require-workers", action="store_true")
+    parser.add_argument("--start-id")
     parser.add_argument("--timeout", type=float, default=30)
     parser.add_argument("--question", help="Also test a real answer (may call the LLM provider)")
     args = parser.parse_args(argv)
@@ -51,7 +63,10 @@ def main(argv=None):
     ) as client:
         while True:
             try:
-                coverage = check(client, args.require_index, args.require_complete)
+                coverage = check(
+                    client, args.require_index, args.require_complete, args.require_workers,
+                    args.start_id,
+                )
                 break
             except (httpx.HTTPError, ValueError) as error:
                 if time.monotonic() >= deadline:

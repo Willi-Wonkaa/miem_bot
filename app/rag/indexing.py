@@ -31,6 +31,16 @@ def make_embedder(settings: Settings):
         torch.ao.quantization.quantize_dynamic(
             model, {torch.nn.Linear}, dtype=torch.qint8, inplace=True
         )
+        # Return temporary full-precision allocations to the Ubuntu container's memory budget.
+        import ctypes
+        import gc
+
+        gc.collect()
+        try:
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
+        except OSError:
+            pass
+    model.eval()
     log.info(
         "embedding_model_ready model=%s quantized=%s seconds=%.3f",
         settings.embed_model,

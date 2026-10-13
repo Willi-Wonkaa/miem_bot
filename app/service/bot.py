@@ -8,7 +8,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot, Dispatcher, F
-from aiogram.exceptions import TelegramAPIError
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     BotCommand,
@@ -28,16 +28,38 @@ log = logging.getLogger(__name__)
 def index_status(progress):
     if not progress:
         return "Индексация ещё не запускалась."
-    return (
-        f"Индексатор: {progress.get('state', 'unknown')}\n"
-        f"Файлы: {progress.get('done', 0)}/{progress.get('total', 0)}, "
-        f"осталось {progress.get('remaining', 0)}, ошибок {progress.get('failed', 0)}\n"
-        f"Прогресс: {progress.get('percent', 0):.1f}%\n"
-        f"Прошло: {duration(progress.get('elapsed'))}; ETA ≈ {duration(progress.get('eta'))}\n"
-        f"Текущий файл: {progress.get('current_file') or '—'}\n"
-        f"Чанки файла: {progress.get('file_chunks_done', 0)}/{progress.get('file_chunks_total', 0)}\n"
-        f"Опубликовано файлов: {progress.get('published_files', 0)}"
-    )
+    states = {
+        "preparing": "Подготовка", "analyzing": "Анализ корпуса",
+        "indexing": "Обработка корпуса", "extras": "Обработка FAQ и ссылок",
+        "completed": "Завершена", "completed_with_errors": "Завершена с ошибками",
+        "interrupted": "Остановлена; прогресс сохранён",
+    }
+    phase = states.get(progress.get("state"), progress.get("state", "Ожидание"))
+    lines = ["Индексация корпуса", phase, ""]
+    lines.append(f"Общий прогресс: {progress.get('percent', 0):.1f}%")
+    lines.append(f"Документы: {progress.get('done', 0)}/{progress.get('total', 0)} готово; "
+                 f"ошибок {progress.get('failed', 0)}")
+    lines.append(f"Доступно для ответов: {progress.get('published_files', 0)} документов")
+    if progress.get("analysis_complete"):
+        lines.append(f"Объём: {progress.get('total_bytes', 0) / 1024**2:.1f} МБ")
+        formats = progress.get("formats", {})
+        if formats:
+            lines.append("Форматы: " + ", ".join(f"{k.upper()} — {v}" for k, v in sorted(formats.items())))
+        lines.append(f"Весь корпус: {progress.get('processed_units', 0)}/"
+                     f"{progress.get('total_units', 0)} фрагментов и записей обработано")
+        lines.append(f"Дополнительно: FAQ — {progress.get('faq_total', 0)}, "
+                     f"ссылок — {progress.get('links_total', 0)}")
+    else:
+        lines.append(f"Проанализировано документов: {progress.get('parsed_files', 0)}/"
+                     f"{progress.get('total', 0)}")
+    workers = progress.get("workers", {})
+    if workers:
+        active = sum(worker.get("state") == "running" for worker in workers.values())
+        lines.append(f"Индексаторы: {len(workers)}; работают {active}; "
+                     f"прошли проверку старта {progress.get('workers_ready', 0)}")
+    lines.extend(["", f"Прошло: {duration(progress.get('elapsed'))}",
+                  f"Осталось примерно: {duration(progress.get('eta'))}"])
+    return "\n".join(lines)
 
 
 def timestamp(value, timezone):
@@ -60,7 +82,13 @@ def index_text(state):
                 "state": "остановлен (последний сохранённый прогресс)",
                 "eta": None,
             }
-    return index_status(progress)
+    text = index_status(progress)
+    publication = state.get("index_publication", {})
+    if (progress and progress.get("state") == "completed" and publication.get("complete")
+            and publication.get("build_hash") == progress.get("build_hash")
+            and progress.get("done") == progress.get("total") and not progress.get("failed")):
+        text += "\n\nПроверка: все документы обработаны, полная база опубликована."
+    return text
 
 
 def requests_text(state):
@@ -76,13 +104,22 @@ def requests_text(state):
 
 
 def status_text(state, settings):
-    lines = ["Состояние системы"]
+    lines = ["Система", ""]
+    names = {"service": "Служебный бот", "bot": "Основной бот", "rag": "Ответы (RAG)",
+             "redis": "История диалогов", "indexer": "Индексация"}
     host = state.host()
     if host and time.time() - host.get("updated", 0) < 60:
-        for name, component in sorted(host.get("containers", {}).items()):
+        for name in ["service", "bot", "rag", "redis", "indexer"]:
+            component = host.get("containers", {}).get(name)
+            if not component:
+                continue
+            running = component.get("state") == "running"
+            label = "Работает" if running and component.get("health") in {"healthy", "—"} else (
+                "Запускается" if running else "Остановлен")
+            if name == "indexer" and component.get("state") == "exited" and component.get("exit_code") == 0:
+                label = "Обработка завершена"
             lines.append(
-                f"{name}: {component['state']} ({component.get('health', '—')}), "
-                f"запуск {timestamp(component.get('started'), settings.timezone)}"
+                f"{names[name]}: {label}"
             )
         budget = host.get("budget", {})
         if budget:
@@ -92,37 +129,29 @@ def status_text(state, settings):
             )
     else:
         lines.append("Данные Docker ещё не поступили или устарели.")
-    for component in state.components():
-        lines.append(
-            f"Компонент {component['name']}: {component['state']}, "
-            f"запуск {timestamp(component['started'], settings.timezone)}"
-        )
-    lines.extend(["", index_text(state), "", requests_text(state), ""])
-    stats = state.message_stats()
-    lines.append(
-        f"Сообщения за 1/5/30 минут: {stats['windows']['1']}/"
-        f"{stats['windows']['5']}/{stats['windows']['30']}"
-    )
-    lines.append(
-        f"С запуска основного бота: получено {stats['received']}, "
-        f"обработано {stats['processed']}, ошибок {stats['errors']}"
-    )
+    progress = state.get("index_progress", {})
+    lines.extend(["", f"Корпус: {progress.get('percent', 0):.1f}%; "
+                  f"готово документов {progress.get('done', 0)}/{progress.get('total', 0)}",
+                  "Подробный прогресс — кнопка «Индексация»."])
+    stats = state.request_stats()
+    lines.extend(["", f"Всего запросов: {stats['received']}; "
+                  f"обработано {stats['processed']}; ошибок {stats['errors']}"])
     return "\n".join(lines)[:3900]
 
 
-def keyboard(prefs):
-    rows = [[InlineKeyboardButton(text="📊 Статус системы", callback_data="status")]]
-    rows.append([InlineKeyboardButton(text="Прогресс индексации", callback_data="index")])
-    rows.append([InlineKeyboardButton(text="Количество запросов", callback_data="requests")])
-    for kind, label in {"all": "Все уведомления", **EVENT_TYPES}.items():
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=f"{'✅' if prefs.get(kind, True) else '⏸'} {label}",
-                    callback_data=f"toggle:{kind}",
-                )
-            ]
-        )
+def keyboard(prefs, view="status"):
+    rows = [[InlineKeyboardButton(text="Статус", callback_data="status"),
+             InlineKeyboardButton(text="Индексация", callback_data="index"),
+             InlineKeyboardButton(text="Запросы", callback_data="requests")]]
+    if view == "notifications":
+        for kind, label in {"all": "Все уведомления", **EVENT_TYPES}.items():
+            rows.append([InlineKeyboardButton(
+                text=f"{label}: {'вкл' if prefs.get(kind, True) else 'выкл'}",
+                callback_data=f"toggle:{kind}",
+            )])
+    else:
+        rows.append([InlineKeyboardButton(text="Обновить", callback_data=view),
+                     InlineKeyboardButton(text="Уведомления", callback_data="notifications")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -149,21 +178,29 @@ def create_dispatcher(state, settings):
 
     @dp.message(Command("index", "progress"), F.chat.type == "private")
     async def index(message: Message):
-        await message.answer(index_text(state))
+        await message.answer(index_text(state), reply_markup=keyboard(prefs(message.chat.id), "index"))
 
     @dp.message(Command("requests", "stats"), F.chat.type == "private")
     async def requests(message: Message):
-        await message.answer(requests_text(state))
+        await message.answer(requests_text(state), reply_markup=keyboard(prefs(message.chat.id), "requests"))
 
-    @dp.callback_query(F.data.in_({"status", "index", "requests"}))
+    @dp.callback_query(F.data.in_({"status", "index", "requests", "notifications"}))
     async def status_button(query: CallbackQuery):
         if query.message and query.message.chat.type == "private":
             text = {
                 "status": lambda: status_text(state, settings),
                 "index": lambda: index_text(state),
                 "requests": lambda: requests_text(state),
+                "notifications": lambda: "Уведомления\n\nАнализ, запуск индексаторов и завершение "
+                    "приходят автоматически. Подробные файлы и статистику можно включить здесь.",
             }[query.data]()
-            await query.message.edit_text(text, reply_markup=keyboard(prefs(query.message.chat.id)))
+            try:
+                await query.message.edit_text(
+                    text, reply_markup=keyboard(prefs(query.message.chat.id), query.data)
+                )
+            except TelegramBadRequest as error:
+                if "message is not modified" not in str(error).lower():
+                    raise
         await query.answer()
 
     @dp.callback_query(F.data.startswith("toggle:"))
@@ -172,7 +209,7 @@ def create_dispatcher(state, settings):
             kind = query.data.split(":", 1)[1]
             if kind in {"all", *EVENT_TYPES}:
                 updated = state.toggle(query.message.chat.id, kind)
-                await query.message.edit_reply_markup(reply_markup=keyboard(updated))
+                await query.message.edit_reply_markup(reply_markup=keyboard(updated, "notifications"))
                 log.info(
                     "notification_toggle chat=%d kind=%s enabled=%s",
                     query.message.chat.id,
@@ -198,6 +235,9 @@ async def monitor(bot, state, settings, run_id):
                         component.get("health"),
                     ]
                     if identity != previous.get(name):
+                        if name == "indexer" and component.get("state") == "exited" and component.get("exit_code") == 0:
+                            previous[name] = identity
+                            continue
                         state.event(
                             "startup" if component["state"] == "running" else "errors",
                             name,
@@ -216,7 +256,7 @@ async def monitor(bot, state, settings, run_id):
             for subscriber in state.subscribers():
                 for event in state.events(subscriber["cursor"], limit=25):
                     prefs = subscriber["prefs"]
-                    if prefs.get("all") and prefs.get(event["kind"], False):
+                    if prefs.get("all") and prefs.get(event["kind"], event["kind"] == "completion"):
                         try:
                             await bot.send_message(subscriber["chat"], event["text"][:3900])
                         except TelegramAPIError:

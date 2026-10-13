@@ -105,37 +105,43 @@ echo "Deployed $release"
 if [[ "$mode" == index ]]; then
   if docker inspect miem-bot-indexer >/dev/null 2>&1; then
     if [[ "$(docker inspect --format '{{.State.Running}}' miem-bot-indexer)" == true ]]; then
-      echo "Indexer is already running" >&2
-      exit 1
+      if [[ "$(docker inspect --format '{{.Config.Image}}' miem-bot-indexer)" != "miem-rag:$release" ]]; then
+        docker stop --timeout 60 miem-bot-indexer >/dev/null
+      fi
     fi
-    docker rm miem-bot-indexer >/dev/null
+    if [[ "$(docker inspect --format '{{.State.Running}}' miem-bot-indexer)" != true ]]; then
+      docker rm miem-bot-indexer >/dev/null
+    fi
   fi
-  "${compose[@]}" --profile index run -d --no-deps --name miem-bot-indexer indexer
+  if docker inspect miem-bot-indexer >/dev/null 2>&1; then
+    index_start_id=$(docker inspect --format '{{json .Config.Env}}' miem-bot-indexer | \
+      python3 -c 'import json,sys; print(next(value.split("=",1)[1] for value in json.load(sys.stdin) if value.startswith("INDEX_START_ID=")))')
+  else
+    index_start_id="$release-$(date +%s%N)"
+    "${compose[@]}" --profile index run -d --no-deps --name miem-bot-indexer \
+      -e "INDEX_START_ID=$index_start_id" indexer
+    docker update --restart on-failure:5 miem-bot-indexer >/dev/null
+  fi
   # Fail promptly if the writer exits before its first publication.
   ready=false
   deadline=$((SECONDS + 1800))
   while (( SECONDS < deadline )); do
-    if "${compose[@]}" exec -T rag python -m app.rag.smoke --require-index --timeout 1; then
+    if "${compose[@]}" exec -T rag python -m app.rag.smoke --require-workers \
+      --start-id "$index_start_id" --timeout 1; then
       ready=true
       break
     fi
-    if [[ "$(docker inspect --format '{{.State.Running}}' miem-bot-indexer)" != true ]]; then
+    if [[ "$(docker inspect --format '{{.State.Running}}' miem-bot-indexer)" != true \
+          && "$(docker inspect --format '{{.State.ExitCode}}' miem-bot-indexer)" != 0 ]]; then
       docker logs --tail 100 miem-bot-indexer
-      echo "Indexer stopped before the first searchable publication" >&2
+      echo "Indexer failed before all workers were ready" >&2
       exit 1
     fi
     sleep 10
   done
   if [[ "$ready" != true ]]; then
-    echo "First searchable publication was not ready within 30 minutes" >&2
+    echo "Indexer workers were not ready within 30 minutes" >&2
     exit 1
   fi
-  docker logs --follow miem-bot-indexer
-  status=$(docker wait miem-bot-indexer)
-  if [[ "$status" != 0 ]]; then
-    echo "Indexing stopped with exit $status; published data and checkpoints remain available" >&2
-    exit 1
-  fi
-  "${compose[@]}" exec -T rag python -m app.rag.smoke --require-complete --timeout 120 \
-    --question "Where can I find the class timetable at MIEM?"
+  echo "All indexer workers processed a document; background indexing is independent of Actions"
 fi

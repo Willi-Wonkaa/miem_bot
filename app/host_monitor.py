@@ -132,6 +132,7 @@ def main():
     log.setLevel(logging.INFO)
     previous = cpu_sample()
     applied = None
+    next_resume = 0
     while True:
         try:
             current = cpu_sample()
@@ -173,6 +174,12 @@ def main():
                 args.reserve_ram,
             )
             limits["memory"] = min(limits["memory"], 4 * 1024**3)
+            if (indexer.get("state") == "exited" and indexer.get("exit_code", 0) != 0
+                    and time.monotonic() >= next_resume and limits["memory"] >= 1536 * 1024**2
+                    and limits["cpus"] >= 0.2):
+                command("docker", "start", indexer["id"])
+                next_resume = time.monotonic() + 120
+                log.info("indexer_resumed_from_checkpoints")
             if indexer.get("state") == "running":
                 # Checkpoint and stop rather than violate the resource reserve or force a cgroup OOM.
                 if limits["memory"] < indexer_ram + 128 * 1024**2 or limits["cpus"] < 0.05:
@@ -184,6 +191,7 @@ def main():
                         capture_output=True,
                     )
                     applied = None
+                    next_resume = time.monotonic() + 120
                     continue
                 memory_limit = limits["memory"]
                 desired = (indexer["id"], limits["cpus"], memory_limit // (64 * 1024**2))

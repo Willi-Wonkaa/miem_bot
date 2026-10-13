@@ -1,8 +1,10 @@
+import asyncio
 import logging
 import time
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
+import pytest
 from aiogram import Bot
 from aiogram.methods import SendMessage
 from aiogram.types import Chat, Message, Update, User
@@ -10,7 +12,7 @@ from aiogram.types import Chat, Message, Update, User
 from app.config import Settings
 from app.host_monitor import budget
 from app.logging_setup import setup_logging
-from app.service.bot import create_dispatcher, keyboard, status_text
+from app.service.bot import create_dispatcher, keyboard, monitor, status_text
 from app.telemetry import Telemetry
 
 
@@ -64,14 +66,15 @@ def test_notification_preferences_survive_restart_and_are_per_chat(tmp_path):
     state.subscribe(2)
     state.event("files", "indexer", "one.txt")
     changed = state.toggle(1, "files")
-    assert changed["files"] is False and changed["all"] is True
+    assert changed["files"] is True and changed["all"] is True
     restarted = Telemetry(tmp_path)
     subscriptions = {row["chat"]: row for row in restarted.subscribers()}
-    assert subscriptions[1]["prefs"]["files"] is False
-    assert subscriptions[2]["prefs"]["files"] is True
+    assert subscriptions[1]["prefs"]["files"] is True
+    assert subscriptions[2]["prefs"]["files"] is False
     assert subscriptions[1]["cursor"] == state.last_event()
     assert restarted.toggle(1, "all")["all"] is False
-    callbacks = [row[0].callback_data for row in keyboard(changed).inline_keyboard]
+    callbacks = [button.callback_data for row in keyboard(changed, "notifications").inline_keyboard
+                 for button in row]
     assert "status" in callbacks and "toggle:all" in callbacks and "toggle:traffic" in callbacks
     assert "index" in callbacks and "requests" in callbacks
 
@@ -132,7 +135,7 @@ async def test_service_bot_activation_and_status(tmp_path):
     assert state.subscribers()[0]["chat"] == 55
     assert "Служебный бот активирован" in replies[-1].text
     assert replies[-1].reply_markup.inline_keyboard[0][0].callback_data == "status"
-    assert "С запуска основного бота" in status_text(state, settings)
+    assert "Всего запросов" in status_text(state, settings)
     state.put(
         "index_progress",
         {
@@ -148,7 +151,8 @@ async def test_service_bot_activation_and_status(tmp_path):
         bot,
         Update(update_id=2, message=message.model_copy(update={"message_id": 2, "text": "/index"})),
     )
-    assert "1/205" in replies[-1].text and "example.docx" in replies[-1].text
+    assert "1/205" in replies[-1].text and "example.docx" not in replies[-1].text
+    assert "Чанки файла" not in replies[-1].text
     request_id = state.request_received()
     state.request_processed(request_id)
     await dispatcher.feed_update(
@@ -159,3 +163,22 @@ async def test_service_bot_activation_and_status(tmp_path):
     )
     assert "Всего: 1" in replies[-1].text and "Обработано: 1" in replies[-1].text
     await bot.session.close()
+
+
+async def test_completion_notification_is_delivered_independently_of_progress_prefs(tmp_path, monkeypatch):
+    state = Telemetry(tmp_path)
+    state.subscribe(55)
+    state.toggle(55, "indexer")
+    state.event("completion", "indexer", "Индексация завершена. База знаний полностью обновлена.")
+    bot = AsyncMock()
+    settings = Settings(_env_file=None, monitor_dir=tmp_path)
+
+    async def stop_after_cycle(seconds):
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr("app.service.bot.asyncio.sleep", stop_after_cycle)
+    with pytest.raises(asyncio.CancelledError):
+        await monitor(bot, state, settings, "test-service")
+    bot.send_message.assert_awaited_once_with(
+        55, "Индексация завершена. База знаний полностью обновлена."
+    )

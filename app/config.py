@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     embed_quantize: bool = True
     embed_threads: int = Field(default=2, ge=1, le=32)
     index_parse_workers: int = Field(default=2, ge=1, le=16)
+    index_workers: int = Field(default=3, ge=1, le=8)
+    index_start_id: str = ""
+    index_estimated_chunks_per_second: float = Field(default=0.5, gt=0)
     index_publish_percent: int = Field(default=5, ge=1, le=100)
     index_reload_seconds: float = Field(default=3, ge=0.1)
     monitor_dir: Path = Path("data/monitor")

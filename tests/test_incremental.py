@@ -180,3 +180,44 @@ def test_only_one_writer_can_publish(tmp_path):
         with pytest.raises((RuntimeError, OSError)):
             with writer_lock(tmp_path):
                 pytest.fail("Second writer must be rejected")
+
+
+def test_parallel_workers_analyse_whole_corpus_before_encoding(corpus, tmp_path, monkeypatch):
+    settings, base = corpus
+    settings.index_dir = tmp_path / "parallel"
+    settings.index_workers = 3
+    barrier = threading.Barrier(3)
+    threads = set()
+    mutex = threading.Lock()
+    analysis = []
+    original = IncrementalIndexer.analyse
+
+    def analyse(self, root, jobs, pool):
+        sizes = [path.stat().st_size for _, path, _ in jobs]
+        assert sizes == sorted(sizes)
+        result = original(self, root, jobs, pool)
+        analysis.append(self.progress())
+        return result
+
+    monkeypatch.setattr(IncrementalIndexer, "analyse", analyse)
+
+    class Parallel:
+        def encode(self, values, **kwargs):
+            if "Название документа:" in values[0]:
+                with mutex:
+                    first = threading.get_ident() not in threads
+                    threads.add(threading.get_ident())
+                if first:
+                    barrier.wait(timeout=10)
+            return base.encode(values, **kwargs)
+
+    build_index(settings, Parallel())
+    assert len(threads) == 3
+    assert analysis[0]["analysis_complete"] and analysis[0]["parsed_files"] == 3
+    assert analysis[0]["known_chunks"] == 3 and analysis[0]["initial_eta"] > 0
+    state = IncrementalIndexer(settings, base).telemetry
+    progress = state.get("index_progress")
+    assert progress["startup_ready"] and progress["workers_ready"] == 3
+    assert progress["percent"] == 100 and progress["processed_units"] == progress["total_units"]
+    completions = [event for event in state.events(0) if event["kind"] == "completion"]
+    assert len(completions) == 1 and "полностью обновлена" in completions[0]["text"]

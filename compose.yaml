@@ -63,6 +63,8 @@ services:
       KB_ZIP: /data/raw/MIEM_knowledge_base_unified.zip
       FAQ_PATH: /data/raw/HSE_Answers_RU.xlsx
       INDEX_PARSE_WORKERS: ${INDEX_PARSE_WORKERS:-2}
+      INDEX_WORKERS: ${INDEX_WORKERS:-3}
+      INDEX_ESTIMATED_CHUNKS_PER_SECOND: ${INDEX_ESTIMATED_CHUNKS_PER_SECOND:-0.5}
       INDEX_PUBLISH_PERCENT: ${INDEX_PUBLISH_PERCENT:-5}
     volumes:
       - ./data/raw:/data/raw:ro

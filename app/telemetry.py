@@ -16,6 +16,7 @@ EVENT_TYPES = {
     "indexer": "Ход индексации",
     "files": "Готовые файлы",
     "errors": "Ошибки",
+    "completion": "Завершение индексации",
 }
 
 
@@ -150,7 +151,8 @@ class Telemetry:
         return {"windows": windows, "received": total[0], "processed": total[1], "errors": total[2]}
 
     def subscribe(self, chat):
-        prefs = {"all": True, **dict.fromkeys(EVENT_TYPES, True)}
+        prefs = {"all": True, **dict.fromkeys(EVENT_TYPES, True), "files": False, "traffic": False,
+                 "_layout": 2}
         with self.connection() as db:
             db.execute(
                 "INSERT OR IGNORE INTO subscribers VALUES (?,?,?)",
@@ -186,10 +188,15 @@ class Telemetry:
 
     def subscribers(self):
         with self.connection() as db:
-            return [
-                {**dict(row), "prefs": json.loads(row["prefs"])}
-                for row in db.execute("SELECT * FROM subscribers")
-            ]
+            subscribers = []
+            for row in db.execute("SELECT * FROM subscribers").fetchall():
+                prefs = json.loads(row["prefs"])
+                if prefs.get("_layout") != 2:
+                    prefs.update(files=False, traffic=False, completion=True, _layout=2)
+                    db.execute("UPDATE subscribers SET prefs=? WHERE chat=?",
+                               (json.dumps(prefs), row["chat"]))
+                subscribers.append({**dict(row), "prefs": prefs})
+            return subscribers
 
     def toggle(self, chat, kind):
         if kind not in {"all", *EVENT_TYPES}:
