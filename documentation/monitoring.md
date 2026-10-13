@@ -10,7 +10,8 @@
 Статус показывает Docker state/health, время старта, компоненты и прогресс индексатора.
 
 Логи UTF-8: `/opt/miem-bot/shared/logs/*.txt`; ротация по 10 MiB, 5 резервных файлов.
-`indexer.txt`, `bot.txt`, `rag.txt`, `service.txt`, `host-monitor.txt`.
+`indexer.txt`, `bot.txt`, `rag.txt`, `service.txt`; логи процессов парсинга — `parser-<pid>.txt`.
+Монитор deployment пишет `host-monitor.txt` и `monitor-console.txt` в `shared/host/`.
 Логируются этапы, длительность, ошибки, файлы и расход токенов LLM; ключи маскируются.
 Тексты вопросов/ответов и история целиком в логи не записываются.
 

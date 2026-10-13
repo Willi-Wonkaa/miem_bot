@@ -87,6 +87,9 @@ trap rollback ERR
 "${compose[@]}" up -d --no-build --force-recreate --wait --wait-timeout 120 service
 bash "$target/scripts/start_monitor.sh" "$target"
 "${compose[@]}" up -d --no-build --force-recreate --wait --wait-timeout 300 redis rag bot
+"${compose[@]}" exec -T rag python -m app.rag.smoke
+"${compose[@]}" exec -T redis redis-cli ping
+"${compose[@]}" ps
 ln -sfn "$target" "$root/current"
 trap - ERR
 echo "Deployed $release"
@@ -99,10 +102,13 @@ if [[ "$mode" == index ]]; then
     docker rm miem-bot-indexer >/dev/null
   fi
   "${compose[@]}" --profile index run -d --no-deps --name miem-bot-indexer indexer
+  "${compose[@]}" exec -T rag python -m app.rag.smoke --require-index --timeout 1800
   docker logs --follow miem-bot-indexer
   status=$(docker wait miem-bot-indexer)
   if [[ "$status" != 0 ]]; then
     echo "Indexing stopped with exit $status; published data and checkpoints remain available" >&2
     exit 1
   fi
+  "${compose[@]}" exec -T rag python -m app.rag.smoke --require-complete --timeout 120 \
+    --question "Как найти расписание занятий?"
 fi

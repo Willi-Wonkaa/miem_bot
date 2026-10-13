@@ -1,4 +1,5 @@
 name: CI and deploy
+run-name: MIEM ${{ inputs.mode || 'CI' }} / ${{ inputs.request_id || github.run_id }}
 
 on:
   push:
@@ -9,8 +10,12 @@ on:
         description: "prepare: upload/build; deploy: start services; index: start services and resumable indexing"
         type: choice
         required: true
-        default: prepare
+        default: index
         options: [prepare, deploy, index]
+      request_id:
+        description: "Optional identifier used by scripts/start.py to track this run"
+        type: string
+        required: false
 
 permissions:
   contents: read
