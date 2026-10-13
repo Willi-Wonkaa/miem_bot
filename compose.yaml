@@ -102,7 +102,8 @@ services:
       RAG_API_TOKEN: ${RAG_API_TOKEN:?Set RAG_API_TOKEN in .env}
       POLZA_BASE_URL: ${POLZA_BASE_URL:-https://api.polza.ai/v1}
       GENERATOR_MODEL: ${GENERATOR_MODEL:-qwen/qwen3.5-9b}
-      RAG_CONCURRENCY: ${RAG_CONCURRENCY:-2}
+      RAG_CONCURRENCY: ${RAG_CONCURRENCY:-10}
+      RAG_QUEUE_TIMEOUT: ${RAG_QUEUE_TIMEOUT:-60}
       REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-360}
       INDEX_RELOAD_SECONDS: ${INDEX_RELOAD_SECONDS:-3}
     volumes:
@@ -113,9 +114,9 @@ services:
     depends_on:
       service:
         condition: service_healthy
-    cpus: ${RAG_CPU_LIMIT:-1.0}
+    cpus: ${RAG_CPU_LIMIT:-2.5}
     cpu_shares: 2048
-    mem_limit: ${RAG_MEM_LIMIT:-3g}
+    mem_limit: ${RAG_MEM_LIMIT:-4g}
     healthcheck:
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
       interval: 10s

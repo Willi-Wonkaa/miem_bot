@@ -41,7 +41,8 @@ class Settings(BaseSettings):
     redis_url: str = "redis://redis:6379/0"
     history_ttl: int = Field(default=86400, ge=60)
     request_timeout: float = Field(default=360, ge=30)
-    rag_concurrency: int = Field(default=2, ge=1, le=16)
+    rag_concurrency: int = Field(default=10, ge=1, le=64)
+    rag_queue_timeout: float = Field(default=60, ge=1, le=120)
     link_threshold: float = Field(default=0.75, ge=0, le=1)
     faq_cosine_threshold: float = Field(default=0.8, ge=0, le=1)
     faq_rrf_threshold: float = Field(default=0.032, ge=0)

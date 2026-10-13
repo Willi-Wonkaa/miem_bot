@@ -122,15 +122,21 @@ def create_app(settings: Settings | None = None, pipeline=None) -> FastAPI:
         authenticate(authorization)
         request_id = application.state.telemetry.request_received()
         live = application.state.live_index
-        snapshot = live.snapshot() if live else None
+        queued_at = time.perf_counter()
         try:
-            await asyncio.wait_for(application.state.slots.acquire(), timeout=5)
+            await asyncio.wait_for(
+                application.state.slots.acquire(), timeout=settings.rag_queue_timeout
+            )
         except TimeoutError:
             application.state.telemetry.request_processed(request_id, success=False)
             raise HTTPException(status_code=429, detail="Server busy") from None
         try:
+            snapshot = live.snapshot() if live else None
+            remaining_settings = settings.model_copy(
+                update={"request_timeout": settings.request_timeout - (time.perf_counter() - queued_at)}
+            )
             active = application.state.pipeline or Pipeline(
-                settings, snapshot, application.state.llm_client
+                remaining_settings, snapshot, application.state.llm_client
             )
             started = time.perf_counter()
             result = await run_in_threadpool(active.answer, request.question, request.history)
