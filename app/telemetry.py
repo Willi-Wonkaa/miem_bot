@@ -151,8 +151,13 @@ class Telemetry:
         return {"windows": windows, "received": total[0], "processed": total[1], "errors": total[2]}
 
     def subscribe(self, chat):
-        prefs = {"all": True, **dict.fromkeys(EVENT_TYPES, True), "files": False, "traffic": False,
-                 "_layout": 2}
+        prefs = {
+            "all": True,
+            **dict.fromkeys(EVENT_TYPES, True),
+            "files": False,
+            "traffic": False,
+            "_layout": 2,
+        }
         with self.connection() as db:
             db.execute(
                 "INSERT OR IGNORE INTO subscribers VALUES (?,?,?)",
@@ -193,8 +198,10 @@ class Telemetry:
                 prefs = json.loads(row["prefs"])
                 if prefs.get("_layout") != 2:
                     prefs.update(files=False, traffic=False, completion=True, _layout=2)
-                    db.execute("UPDATE subscribers SET prefs=? WHERE chat=?",
-                               (json.dumps(prefs), row["chat"]))
+                    db.execute(
+                        "UPDATE subscribers SET prefs=? WHERE chat=?",
+                        (json.dumps(prefs), row["chat"]),
+                    )
                 subscribers.append({**dict(row), "prefs": prefs})
             return subscribers
 

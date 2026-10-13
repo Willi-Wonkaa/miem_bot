@@ -29,36 +29,56 @@ def index_status(progress):
     if not progress:
         return "Индексация ещё не запускалась."
     states = {
-        "preparing": "Подготовка", "analyzing": "Анализ корпуса",
-        "indexing": "Обработка корпуса", "extras": "Обработка FAQ и ссылок",
-        "completed": "Завершена", "completed_with_errors": "Завершена с ошибками",
+        "preparing": "Подготовка",
+        "analyzing": "Анализ корпуса",
+        "indexing": "Обработка корпуса",
+        "extras": "Обработка FAQ и ссылок",
+        "completed": "Завершена",
+        "completed_with_errors": "Завершена с ошибками",
         "interrupted": "Остановлена; прогресс сохранён",
     }
     phase = states.get(progress.get("state"), progress.get("state", "Ожидание"))
     lines = ["Индексация корпуса", phase, ""]
     lines.append(f"Общий прогресс: {progress.get('percent', 0):.1f}%")
-    lines.append(f"Документы: {progress.get('done', 0)}/{progress.get('total', 0)} готово; "
-                 f"ошибок {progress.get('failed', 0)}")
+    lines.append(
+        f"Документы: {progress.get('done', 0)}/{progress.get('total', 0)} готово; "
+        f"ошибок {progress.get('failed', 0)}"
+    )
     lines.append(f"Доступно для ответов: {progress.get('published_files', 0)} документов")
     if progress.get("analysis_complete"):
         lines.append(f"Объём: {progress.get('total_bytes', 0) / 1024**2:.1f} МБ")
         formats = progress.get("formats", {})
         if formats:
-            lines.append("Форматы: " + ", ".join(f"{k.upper()} — {v}" for k, v in sorted(formats.items())))
-        lines.append(f"Весь корпус: {progress.get('processed_units', 0)}/"
-                     f"{progress.get('total_units', 0)} фрагментов и записей обработано")
-        lines.append(f"Дополнительно: FAQ — {progress.get('faq_total', 0)}, "
-                     f"ссылок — {progress.get('links_total', 0)}")
+            lines.append(
+                "Форматы: " + ", ".join(f"{k.upper()} — {v}" for k, v in sorted(formats.items()))
+            )
+        lines.append(
+            f"Весь корпус: {progress.get('processed_units', 0)}/"
+            f"{progress.get('total_units', 0)} фрагментов и записей обработано"
+        )
+        lines.append(
+            f"Дополнительно: FAQ — {progress.get('faq_total', 0)}, "
+            f"ссылок — {progress.get('links_total', 0)}"
+        )
     else:
-        lines.append(f"Проанализировано документов: {progress.get('parsed_files', 0)}/"
-                     f"{progress.get('total', 0)}")
+        lines.append(
+            f"Проанализировано документов: {progress.get('parsed_files', 0)}/"
+            f"{progress.get('total', 0)}"
+        )
     workers = progress.get("workers", {})
     if workers:
         active = sum(worker.get("state") == "running" for worker in workers.values())
-        lines.append(f"Индексаторы: {len(workers)}; работают {active}; "
-                     f"прошли проверку старта {progress.get('workers_ready', 0)}")
-    lines.extend(["", f"Прошло: {duration(progress.get('elapsed'))}",
-                  f"Осталось примерно: {duration(progress.get('eta'))}"])
+        lines.append(
+            f"Индексаторы: {len(workers)}; работают {active}; "
+            f"прошли проверку старта {progress.get('workers_ready', 0)}"
+        )
+    lines.extend(
+        [
+            "",
+            f"Прошло: {duration(progress.get('elapsed'))}",
+            f"Осталось примерно: {duration(progress.get('eta'))}",
+        ]
+    )
     return "\n".join(lines)
 
 
@@ -84,9 +104,14 @@ def index_text(state):
             }
     text = index_status(progress)
     publication = state.get("index_publication", {})
-    if (progress and progress.get("state") == "completed" and publication.get("complete")
-            and publication.get("build_hash") == progress.get("build_hash")
-            and progress.get("done") == progress.get("total") and not progress.get("failed")):
+    if (
+        progress
+        and progress.get("state") == "completed"
+        and publication.get("complete")
+        and publication.get("build_hash") == progress.get("build_hash")
+        and progress.get("done") == progress.get("total")
+        and not progress.get("failed")
+    ):
         text += "\n\nПроверка: все документы обработаны, полная база опубликована."
     return text
 
@@ -105,8 +130,13 @@ def requests_text(state):
 
 def status_text(state, settings):
     lines = ["Система", ""]
-    names = {"service": "Служебный бот", "bot": "Основной бот", "rag": "Ответы (RAG)",
-             "redis": "История диалогов", "indexer": "Индексация"}
+    names = {
+        "service": "Служебный бот",
+        "bot": "Основной бот",
+        "rag": "Ответы (RAG)",
+        "redis": "История диалогов",
+        "indexer": "Индексация",
+    }
     host = state.host()
     if host and time.time() - host.get("updated", 0) < 60:
         for name in ["service", "bot", "rag", "redis", "indexer"]:
@@ -114,13 +144,18 @@ def status_text(state, settings):
             if not component:
                 continue
             running = component.get("state") == "running"
-            label = "Работает" if running and component.get("health") in {"healthy", "—"} else (
-                "Запускается" if running else "Остановлен")
-            if name == "indexer" and component.get("state") == "exited" and component.get("exit_code") == 0:
-                label = "Обработка завершена"
-            lines.append(
-                f"{names[name]}: {label}"
+            label = (
+                "Работает"
+                if running and component.get("health") in {"healthy", "—"}
+                else ("Запускается" if running else "Остановлен")
             )
+            if (
+                name == "indexer"
+                and component.get("state") == "exited"
+                and component.get("exit_code") == 0
+            ):
+                label = "Обработка завершена"
+            lines.append(f"{names[name]}: {label}")
         budget = host.get("budget", {})
         if budget:
             lines.append(
@@ -130,28 +165,50 @@ def status_text(state, settings):
     else:
         lines.append("Данные Docker ещё не поступили или устарели.")
     progress = state.get("index_progress", {})
-    lines.extend(["", f"Корпус: {progress.get('percent', 0):.1f}%; "
-                  f"готово документов {progress.get('done', 0)}/{progress.get('total', 0)}",
-                  "Подробный прогресс — кнопка «Индексация»."])
+    lines.extend(
+        [
+            "",
+            f"Корпус: {progress.get('percent', 0):.1f}%; "
+            f"готово документов {progress.get('done', 0)}/{progress.get('total', 0)}",
+            "Подробный прогресс — кнопка «Индексация».",
+        ]
+    )
     stats = state.request_stats()
-    lines.extend(["", f"Всего запросов: {stats['received']}; "
-                  f"обработано {stats['processed']}; ошибок {stats['errors']}"])
+    lines.extend(
+        [
+            "",
+            f"Всего запросов: {stats['received']}; "
+            f"обработано {stats['processed']}; ошибок {stats['errors']}",
+        ]
+    )
     return "\n".join(lines)[:3900]
 
 
 def keyboard(prefs, view="status"):
-    rows = [[InlineKeyboardButton(text="Статус", callback_data="status"),
-             InlineKeyboardButton(text="Индексация", callback_data="index"),
-             InlineKeyboardButton(text="Запросы", callback_data="requests")]]
+    rows = [
+        [
+            InlineKeyboardButton(text="Статус", callback_data="status"),
+            InlineKeyboardButton(text="Индексация", callback_data="index"),
+            InlineKeyboardButton(text="Запросы", callback_data="requests"),
+        ]
+    ]
     if view == "notifications":
         for kind, label in {"all": "Все уведомления", **EVENT_TYPES}.items():
-            rows.append([InlineKeyboardButton(
-                text=f"{label}: {'вкл' if prefs.get(kind, True) else 'выкл'}",
-                callback_data=f"toggle:{kind}",
-            )])
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"{label}: {'вкл' if prefs.get(kind, True) else 'выкл'}",
+                        callback_data=f"toggle:{kind}",
+                    )
+                ]
+            )
     else:
-        rows.append([InlineKeyboardButton(text="Обновить", callback_data=view),
-                     InlineKeyboardButton(text="Уведомления", callback_data="notifications")])
+        rows.append(
+            [
+                InlineKeyboardButton(text="Обновить", callback_data=view),
+                InlineKeyboardButton(text="Уведомления", callback_data="notifications"),
+            ]
+        )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -178,11 +235,15 @@ def create_dispatcher(state, settings):
 
     @dp.message(Command("index", "progress"), F.chat.type == "private")
     async def index(message: Message):
-        await message.answer(index_text(state), reply_markup=keyboard(prefs(message.chat.id), "index"))
+        await message.answer(
+            index_text(state), reply_markup=keyboard(prefs(message.chat.id), "index")
+        )
 
     @dp.message(Command("requests", "stats"), F.chat.type == "private")
     async def requests(message: Message):
-        await message.answer(requests_text(state), reply_markup=keyboard(prefs(message.chat.id), "requests"))
+        await message.answer(
+            requests_text(state), reply_markup=keyboard(prefs(message.chat.id), "requests")
+        )
 
     @dp.callback_query(F.data.in_({"status", "index", "requests", "notifications"}))
     async def status_button(query: CallbackQuery):
@@ -191,8 +252,10 @@ def create_dispatcher(state, settings):
                 "status": lambda: status_text(state, settings),
                 "index": lambda: index_text(state),
                 "requests": lambda: requests_text(state),
-                "notifications": lambda: "Уведомления\n\nАнализ, запуск индексаторов и завершение "
-                    "приходят автоматически. Подробные файлы и статистику можно включить здесь.",
+                "notifications": lambda: (
+                    "Уведомления\n\nАнализ, запуск индексаторов и завершение "
+                    "приходят автоматически. Подробные файлы и статистику можно включить здесь."
+                ),
             }[query.data]()
             try:
                 await query.message.edit_text(
@@ -209,7 +272,9 @@ def create_dispatcher(state, settings):
             kind = query.data.split(":", 1)[1]
             if kind in {"all", *EVENT_TYPES}:
                 updated = state.toggle(query.message.chat.id, kind)
-                await query.message.edit_reply_markup(reply_markup=keyboard(updated, "notifications"))
+                await query.message.edit_reply_markup(
+                    reply_markup=keyboard(updated, "notifications")
+                )
                 log.info(
                     "notification_toggle chat=%d kind=%s enabled=%s",
                     query.message.chat.id,
@@ -235,7 +300,11 @@ async def monitor(bot, state, settings, run_id):
                         component.get("health"),
                     ]
                     if identity != previous.get(name):
-                        if name == "indexer" and component.get("state") == "exited" and component.get("exit_code") == 0:
+                        if (
+                            name == "indexer"
+                            and component.get("state") == "exited"
+                            and component.get("exit_code") == 0
+                        ):
                             previous[name] = identity
                             continue
                         state.event(

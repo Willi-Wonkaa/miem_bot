@@ -133,6 +133,11 @@ def main():
     previous = cpu_sample()
     applied = None
     next_resume = 0
+    pause_path = args.directory / "indexer-paused.json"
+    try:
+        paused = json.loads(pause_path.read_text())
+    except (OSError, ValueError):
+        paused = {}
     while True:
         try:
             current = cpu_sample()
@@ -174,11 +179,19 @@ def main():
                 args.reserve_ram,
             )
             limits["memory"] = min(limits["memory"], 4 * 1024**3)
-            if (indexer.get("state") == "exited" and indexer.get("exit_code", 0) != 0
-                    and time.monotonic() >= next_resume and limits["memory"] >= 1536 * 1024**2
-                    and limits["cpus"] >= 0.2):
+            if (
+                indexer.get("state") == "exited"
+                and indexer.get("exit_code", 0) != 0
+                and paused.get("id") == indexer.get("id")
+                and time.time() - paused.get("updated", 0) >= 120
+                and time.monotonic() >= next_resume
+                and limits["memory"] >= 1536 * 1024**2
+                and limits["cpus"] >= 0.2
+            ):
                 command("docker", "start", indexer["id"])
                 next_resume = time.monotonic() + 120
+                paused = {}
+                pause_path.unlink(missing_ok=True)
                 log.info("indexer_resumed_from_checkpoints")
             if indexer.get("state") == "running":
                 # Checkpoint and stop rather than violate the resource reserve or force a cgroup OOM.
@@ -192,6 +205,8 @@ def main():
                     )
                     applied = None
                     next_resume = time.monotonic() + 120
+                    paused = {"id": indexer["id"], "updated": time.time()}
+                    atomic_json(pause_path, paused)
                     continue
                 memory_limit = limits["memory"]
                 desired = (indexer["id"], limits["cpus"], memory_limit // (64 * 1024**2))

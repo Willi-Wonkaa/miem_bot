@@ -9,7 +9,9 @@ import httpx
 from app.config import Settings
 
 
-def check(client, require_index=False, require_complete=False, require_workers=False, start_id=None):
+def check(
+    client, require_index=False, require_complete=False, require_workers=False, start_id=None
+):
     health = client.get("/health")
     health.raise_for_status()
     if health.json().get("status") != "ok":
@@ -35,8 +37,11 @@ def check(client, require_index=False, require_complete=False, require_workers=F
         if start_id and progress.get("start_id") != start_id:
             raise ValueError("Waiting for this indexer run, not a previous run")
         complete_reused = progress.get("reused_complete") and coverage.get("complete")
-        workers_ready = (progress.get("startup_ready") and progress.get("workers_total", 0) > 0
-                         and progress.get("workers_ready") == progress.get("workers_total"))
+        workers_ready = (
+            progress.get("startup_ready")
+            and progress.get("workers_total", 0) > 0
+            and progress.get("workers_ready") == progress.get("workers_total")
+        )
         if not progress.get("analysis_complete") or not (workers_ready or complete_reused):
             raise ValueError("Waiting for every indexer to process its first document")
     return coverage
@@ -64,7 +69,10 @@ def main(argv=None):
         while True:
             try:
                 coverage = check(
-                    client, args.require_index, args.require_complete, args.require_workers,
+                    client,
+                    args.require_index,
+                    args.require_complete,
+                    args.require_workers,
                     args.start_id,
                 )
                 break

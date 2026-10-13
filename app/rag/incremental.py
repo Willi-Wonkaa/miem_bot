@@ -99,7 +99,11 @@ class IncrementalIndexer:
         rate = self.encoded_now / active_elapsed if self.encoded_now and active_elapsed > 5 else 0
         estimate_rate = rate or self.settings.index_estimated_chunks_per_second
         cached_remaining = max(0, self.cached_units - (processed_units - self.encoded_now))
-        eta = max(0, units - processed_units - cached_remaining) / estimate_rate if self.analysis_complete else None
+        eta = (
+            max(0, units - processed_units - cached_remaining) / estimate_rate
+            if self.analysis_complete
+            else None
+        )
         if self.state in {"completed", "completed_with_errors"}:
             eta = 0
         elif self.state == "interrupted":
@@ -134,9 +138,8 @@ class IncrementalIndexer:
             "workers": {key: dict(value) for key, value in self.workers.items()},
             "workers_total": len(self.workers),
             "workers_ready": sum(worker["done"] > 0 for worker in self.workers.values()),
-            "startup_ready": bool(self.workers) and all(
-                worker["done"] > 0 for worker in self.workers.values()
-            ),
+            "startup_ready": bool(self.workers)
+            and all(worker["done"] > 0 for worker in self.workers.values()),
             "published_files": self.published_files,
             "updated": time.time(),
         }
@@ -261,11 +264,13 @@ class IncrementalIndexer:
         sync_directory(directory)
         return np.load(final, mmap_mode="r", allow_pickle=False)
 
-    def add_document(self, meta, checkpoint, vectors=None, worker_id=None):
+    def add_document(self, meta, checkpoint, vectors=None, worker_id=None, cached=None):
         chunks = read_json(checkpoint / "chunks.json")
         before_encoded = self.encoded_now
         if vectors is None:
-            vectors = self.encode_checkpoint([retrieval_text(chunk) for chunk in chunks], checkpoint)
+            vectors = self.encode_checkpoint(
+                [retrieval_text(chunk) for chunk in chunks], checkpoint
+            )
         if self.index is None:
             self.index = faiss.IndexFlatIP(self.dimension)
         self.index.add(vectors)
@@ -275,7 +280,8 @@ class IncrementalIndexer:
             with self.progress_lock:
                 self.workers[worker_id]["done"] += 1
         atomic_json(checkpoint / "complete.json", {"chunks": len(chunks), "completed": time.time()})
-        cached = self.encoded_now == before_encoded
+        if cached is None:
+            cached = self.encoded_now == before_encoded
         label = "Восстановлен из сохранённого прогресса" if cached else "Проиндексирован файл"
         self.telemetry.event(
             "files",
@@ -328,7 +334,11 @@ class IncrementalIndexer:
     def publish(self, complete=False):
         if self.index is None:
             return None
-        if self.resume_generation and not complete and len(self.completed) < self.resume_published_files:
+        if (
+            self.resume_generation
+            and not complete
+            and len(self.completed) < self.resume_published_files
+        ):
             return self.resume_generation
         generation = uuid.uuid4().hex
         directory = self.settings.index_dir / generation
@@ -414,7 +424,8 @@ class IncrementalIndexer:
     def file_error(self, meta, error):
         self.failed[meta["file"]] = type(error).__name__
         self.telemetry.event(
-            "errors", "indexer",
+            "errors",
+            "indexer",
             f"Не удалось обработать файл: {meta['file']} ({type(error).__name__}). "
             "Сохранённый прогресс остальных файлов доступен.",
         )
@@ -450,9 +461,13 @@ class IncrementalIndexer:
                 self.cached_units += count
         for label, rows in [("links", self.planned_links), ("faq", self.planned_faq)]:
             digest = hashlib.sha256(
-                (encoding_signature(self.settings) + label + json.dumps(rows, ensure_ascii=False)).encode()
+                (
+                    encoding_signature(self.settings) + label + json.dumps(rows, ensure_ascii=False)
+                ).encode()
             ).hexdigest()
-            if rows and self.cached_vectors(self.settings.index_dir / "checkpoints" / digest / "vectors.npy", len(rows)):
+            if rows and self.cached_vectors(
+                self.settings.index_dir / "checkpoints" / digest / "vectors.npy", len(rows)
+            ):
                 self.cached_units += len(rows)
         self.initial_eta = (
             sum(self.parsed.values()) + self.aux_total - self.cached_units
@@ -467,7 +482,8 @@ class IncrementalIndexer:
         self.state = "indexing"
         self.progress()
         self.telemetry.event(
-            "indexer", "indexer",
+            "indexer",
+            "indexer",
             f"Корпус проанализирован.\nДокументов: {len(self.documents)}; "
             f"объём: {self.total_bytes / 1024**2:.1f} МБ\n"
             f"Текстовых фрагментов: {sum(self.parsed.values())}; "
@@ -493,13 +509,14 @@ class IncrementalIndexer:
                 self.workers[worker_id]["state"] = "running"
             try:
                 chunks = read_json(checkpoint / "chunks.json")
+                cached = self.cached_vectors(checkpoint / "vectors.npy", len(chunks))
                 vectors = self.encode_checkpoint(
                     [retrieval_text(chunk) for chunk in chunks], checkpoint
                 )
-                results.put((meta, checkpoint, vectors, worker_id, None))
+                results.put((meta, checkpoint, vectors, worker_id, None, cached))
             except Exception as error:
                 log.exception("file_encoding_failed file=%s", meta["file"])
-                results.put((meta, checkpoint, None, worker_id, error))
+                results.put((meta, checkpoint, None, worker_id, error, False))
                 if isinstance(error, InterruptedError):
                     break
             try:
@@ -526,7 +543,7 @@ class IncrementalIndexer:
                 if self.stop_requested:
                     raise InterruptedError("Indexing stop requested")
                 try:
-                    meta, checkpoint, vectors, worker_id, error = results.get(timeout=1)
+                    meta, checkpoint, vectors, worker_id, error, cached = results.get(timeout=1)
                 except Empty:
                     for task in tasks:
                         if task.done():
@@ -537,11 +554,12 @@ class IncrementalIndexer:
                 if error is not None:
                     self.file_error(meta, error)
                 else:
-                    self.add_document(meta, checkpoint, vectors, worker_id)
+                    self.add_document(meta, checkpoint, vectors, worker_id, cached)
                 if not announced and all(worker["done"] > 0 for worker in self.workers.values()):
                     announced = True
                     self.telemetry.event(
-                        "indexer", "indexer",
+                        "indexer",
+                        "indexer",
                         "Все индексаторы успешно начали обработку. "
                         "Индексация продолжается в фоне; общий прогресс доступен по /index.",
                     )
@@ -647,9 +665,13 @@ class IncrementalIndexer:
             self.progress()
             elapsed = self.previous_elapsed + time.monotonic() - self.started
             self.telemetry.event(
-                "completion", "indexer",
-                ("Индексация завершена. База знаний полностью обновлена."
-                 if not self.failed else "Обработка корпуса завершена с ошибками; база неполная.")
+                "completion",
+                "indexer",
+                (
+                    "Индексация завершена. База знаний полностью обновлена."
+                    if not self.failed
+                    else "Обработка корпуса завершена с ошибками; база неполная."
+                )
                 + f"\nДокументов обработано: {len(self.completed)}/{len(self.documents)}. "
                 f"Ошибок: {len(self.failed)}.\nВремя: {duration(elapsed)}",
             )

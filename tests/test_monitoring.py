@@ -73,8 +73,11 @@ def test_notification_preferences_survive_restart_and_are_per_chat(tmp_path):
     assert subscriptions[2]["prefs"]["files"] is False
     assert subscriptions[1]["cursor"] == state.last_event()
     assert restarted.toggle(1, "all")["all"] is False
-    callbacks = [button.callback_data for row in keyboard(changed, "notifications").inline_keyboard
-                 for button in row]
+    callbacks = [
+        button.callback_data
+        for row in keyboard(changed, "notifications").inline_keyboard
+        for button in row
+    ]
     assert "status" in callbacks and "toggle:all" in callbacks and "toggle:traffic" in callbacks
     assert "index" in callbacks and "requests" in callbacks
 
@@ -165,7 +168,9 @@ async def test_service_bot_activation_and_status(tmp_path):
     await bot.session.close()
 
 
-async def test_completion_notification_is_delivered_independently_of_progress_prefs(tmp_path, monkeypatch):
+async def test_completion_notification_is_delivered_independently_of_progress_prefs(
+    tmp_path, monkeypatch
+):
     state = Telemetry(tmp_path)
     state.subscribe(55)
     state.toggle(55, "indexer")

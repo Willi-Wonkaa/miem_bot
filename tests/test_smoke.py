@@ -53,8 +53,13 @@ def test_api_that_accepts_invalid_credentials_fails():
 
 
 def test_worker_readiness_requires_all_workers_from_current_run():
-    progress = {"start_id": "new", "analysis_complete": True, "startup_ready": True,
-                "workers_total": 3, "workers_ready": 2}
+    progress = {
+        "start_id": "new",
+        "analysis_complete": True,
+        "startup_ready": True,
+        "workers_total": 3,
+        "workers_ready": 2,
+    }
     with client_for(ready=True, progress=progress) as client:
         with pytest.raises(ValueError, match="every indexer"):
             check(client, require_workers=True, start_id="new")
