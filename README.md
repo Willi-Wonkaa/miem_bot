@@ -5,7 +5,13 @@ Python 3.12, Docker Compose, GitHub Actions; модель эмбеддингов
 
 ## Запуск всей системы одной командой
 
-Из корня репозитория:
+Через GitHub CLI, без локального запуска приложения:
+
+```bash
+gh workflow run ci-cd.yml --ref main -f mode=index
+```
+
+Из корня репозитория также доступен лёгкий клиент с отслеживанием результата:
 
 ```bash
 python scripts/start.py
@@ -120,3 +126,9 @@ uv run --frozen --extra bot pytest -q
 - [Запуск, диагностика и обслуживание](documentation/operations.md)
 - [CI/CD и секреты Actions](documentation/ci-cd.md)
 - [Логи, служебный бот и статусы](documentation/monitoring.md)
+
+Статус работающей системы через отдельный Actions без перезапуска компонентов:
+
+```bash
+gh workflow run status.yml --ref main
+```
