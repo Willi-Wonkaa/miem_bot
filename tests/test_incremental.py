@@ -211,6 +211,7 @@ def test_parallel_workers_analyse_whole_corpus_before_encoding(corpus, tmp_path,
                     barrier.wait(timeout=10)
             return base.encode(values, **kwargs)
 
+    cursor = IncrementalIndexer(settings, base).telemetry.last_event()
     build_index(settings, Parallel())
     assert len(threads) == 3
     assert analysis[0]["analysis_complete"] and analysis[0]["parsed_files"] == 3
@@ -219,5 +220,5 @@ def test_parallel_workers_analyse_whole_corpus_before_encoding(corpus, tmp_path,
     progress = state.get("index_progress")
     assert progress["startup_ready"] and progress["workers_ready"] == 3
     assert progress["percent"] == 100 and progress["processed_units"] == progress["total_units"]
-    completions = [event for event in state.events(0) if event["kind"] == "completion"]
+    completions = [event for event in state.events(cursor) if event["kind"] == "completion"]
     assert len(completions) == 1 and "полностью обновлена" in completions[0]["text"]
