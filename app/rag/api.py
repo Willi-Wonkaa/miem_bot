@@ -5,6 +5,7 @@ import secrets
 import time
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import FastAPI, Header, HTTPException
@@ -38,6 +39,8 @@ class AnswerRequest(BaseModel):
 class AnswerResponse(BaseModel):
     answer: str
     sources: list[str]
+    answered_at: str | None = None
+    model: str | None = None
     route: str
     tokens: int
     time_sec: float
@@ -132,6 +135,8 @@ def create_app(settings: Settings | None = None, pipeline=None) -> FastAPI:
             started = time.perf_counter()
             result = await run_in_threadpool(active.answer, request.question, request.history)
             result["coverage"] = live.coverage(snapshot) if live else {}
+            result.setdefault("answered_at", datetime.now(timezone.utc).isoformat())
+            result.setdefault("model", settings.generator_model if result.get("route") != "faq" else None)
             application.state.telemetry.request_processed(request_id)
             log.info(
                 "answer_completed route=%s seconds=%.3f tokens=%d",

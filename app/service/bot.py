@@ -20,7 +20,9 @@ from aiogram.types import (
 
 from app.config import Settings
 from app.logging_setup import setup_logging
+from app.service.history import register_history
 from app.telemetry import EVENT_TYPES, Telemetry, duration
+from app.transcripts import Transcripts
 
 log = logging.getLogger(__name__)
 
@@ -198,6 +200,8 @@ def keyboard(prefs, view="status"):
             InlineKeyboardButton(text="Запросы", callback_data="requests"),
         ]
     ]
+    if prefs.get("_history_admin"):
+        rows.append([InlineKeyboardButton(text="Переписки", callback_data="archive:u:0")])
     if view == "notifications":
         for kind, label in {"all": "Все уведомления", **EVENT_TYPES}.items():
             rows.append(
@@ -220,10 +224,13 @@ def keyboard(prefs, view="status"):
 
 def create_dispatcher(state, settings):
     dp = Dispatcher()
+    register_history(dp, Transcripts(settings.conversation_dir), settings)
 
     def prefs(chat):
         state.subscribe(chat)
-        return next(row["prefs"] for row in state.subscribers() if row["chat"] == chat)
+        result = next(row["prefs"] for row in state.subscribers() if row["chat"] == chat)
+        result["_history_admin"] = chat in settings.service_admin_ids
+        return result
 
     @dp.message(CommandStart(), F.chat.type == "private")
     async def start(message: Message):
@@ -278,6 +285,7 @@ def create_dispatcher(state, settings):
             kind = query.data.split(":", 1)[1]
             if kind in {"all", *EVENT_TYPES}:
                 updated = state.toggle(query.message.chat.id, kind)
+                updated["_history_admin"] = query.from_user.id in settings.service_admin_ids
                 await query.message.edit_reply_markup(
                     reply_markup=keyboard(updated, "notifications")
                 )
@@ -372,6 +380,9 @@ async def main():
                 BotCommand(command="status", description="Состояние системы"),
                 BotCommand(command="index", description="Прогресс индексации"),
                 BotCommand(command="requests", description="Количество запросов"),
+                BotCommand(command="users", description="Переписки пользователей (администратор)"),
+                BotCommand(command="history", description="История пользователя (администратор)"),
+                BotCommand(command="export", description="Выгрузка переписки (администратор)"),
             ]
         )
         dp = create_dispatcher(state, settings)

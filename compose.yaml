@@ -28,6 +28,8 @@ services:
     restart: unless-stopped
     environment:
       SERVICE_BOT_TOKEN: ${SERVICE_BOT_TOKEN:-}
+      SERVICE_ADMIN_IDS: ${SERVICE_ADMIN_IDS:-[]}
+      CONVERSATION_DIR: /data/history
       MONITOR_DIR: /data/monitor
       LOG_DIR: /data/logs
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -38,6 +40,7 @@ services:
       - monitor-data:/data/monitor
       - ./logs:/data/logs
       - ./host-monitor:/data/host:ro
+      - ./data/history:/data/history
     healthcheck:
       test: [CMD, python, -c, "import pathlib,time; p=pathlib.Path('/tmp/service-heartbeat'); assert p.exists() and time.time()-float(p.read_text())<30"]
       interval: 5s
@@ -154,11 +157,13 @@ services:
       RAG_URL: http://rag:8000
       REDIS_URL: redis://redis:6379/0
       HISTORY_TTL: ${HISTORY_TTL:-86400}
+      CONVERSATION_DIR: /data/history
       REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-360}
       MONITOR_DIR: /data/monitor
       LOG_DIR: /data/logs
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
+      - ./data/history:/data/history
       - monitor-data:/data/monitor
       - ./logs:/data/logs
     depends_on:

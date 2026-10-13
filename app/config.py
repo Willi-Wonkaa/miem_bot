@@ -9,6 +9,8 @@ class Settings(BaseSettings):
 
     telegram_bot_token: SecretStr = SecretStr("")
     service_bot_token: SecretStr = SecretStr("")
+    service_admin_ids: tuple[int, ...] = ()
+    conversation_dir: Path = Path("data/history")
     polza_api_key: SecretStr = SecretStr("")
     rag_api_token: SecretStr = SecretStr("")
     polza_base_url: str = "https://api.polza.ai/v1"

@@ -18,9 +18,14 @@ from redis.exceptions import RedisError
 
 from app.config import Settings
 from app.logging_setup import setup_logging
+from app.telegram.archive import IncomingArchive, OutgoingArchive, conversation
+from app.telegram.feedback import keyboard as feedback_keyboard
+from app.telegram.feedback import maintain as maintain_feedback
+from app.telegram.feedback import register_feedback
 from app.telegram.formatting import answer_parts, format_telegram_answer
 from app.telegram.history import HistoryStore
 from app.telemetry import Telemetry
+from app.transcripts import Transcripts
 
 log = logging.getLogger(__name__)
 
@@ -71,15 +76,23 @@ def coverage_note(coverage):
 
 
 def create_dispatcher(
-    store: HistoryStore, client: httpx.AsyncClient, telemetry=None, run_id=None
+    store: HistoryStore, client: httpx.AsyncClient, telemetry=None, run_id=None, archive=None
 ) -> Dispatcher:
     dp = Dispatcher()
+    if archive is not None:
+        dp.message.outer_middleware(IncomingArchive(archive))
+        dp.edited_message.outer_middleware(IncomingArchive(archive))
+        register_feedback(dp, archive)
+
+        @dp.edited_message()
+        async def record_edit(message: Message):
+            return
     if telemetry is not None:
         dp.message.outer_middleware(MetricsMiddleware(telemetry, run_id))
 
     @dp.message(CommandStart())
     async def start(message: Message):
-        await message.answer("Напиши вопрос про учебу в НИУ ВШЭ. /reset — очистить историю.")
+        await message.answer("Напиши вопрос про учебу в НИУ ВШЭ. /reset — начать новый диалог.")
 
     @dp.message(Command("index"))
     async def show_index(message: Message):
@@ -118,7 +131,7 @@ def create_dispatcher(
             return
         try:
             await store.clear(session)
-            await message.answer("История диалога очищена.")
+            await message.answer("Контекст диалога очищен. Можно задать новый вопрос.")
         finally:
             await store.release(session, token)
 
@@ -152,12 +165,20 @@ def create_dispatcher(
                 )
                 response.raise_for_status()
             result = response.json()
+            answer_id = None
+            if archive is not None and (scope := conversation.get()) is not None:
+                scope.answer_id = archive.answer(scope.user_id, scope.question_id, result)
+                answer_id = scope.answer_id
             answer_text = result["answer"]
-            for part in answer_parts(answer_text):
+            parts = answer_parts(answer_text)
+            for index, part in enumerate(parts):
+                markup = feedback_keyboard(answer_id) if answer_id and index == len(parts)-1 else None
                 try:
-                    await message.answer(format_telegram_answer(part), parse_mode=ParseMode.HTML)
+                    await message.answer(format_telegram_answer(part), parse_mode=ParseMode.HTML, reply_markup=markup)
                 except TelegramBadRequest:
-                    await message.answer(part, parse_mode=None)
+                    await message.answer(part, parse_mode=None, reply_markup=markup)
+            if archive is not None and (scope := conversation.get()) is not None:
+                scope.answer_id = None
             if note := coverage_note(result.get("coverage")):
                 await message.answer(note)
             if result.get("route") != "warming":
@@ -243,19 +264,25 @@ async def main():
         Bot(token=settings.telegram_bot_token.get_secret_value()) as bot,
     ):
         await redis.ping()
-        dp = create_dispatcher(store, client, telemetry, run_id)
+        archive = Transcripts(settings.conversation_dir)
+        bot.session.middleware(OutgoingArchive(archive))
+        dp = create_dispatcher(store, client, telemetry, run_id, archive)
         task = asyncio.create_task(heartbeat(redis, client, bot, telemetry, run_id))
         notifications = asyncio.create_task(file_notifications(bot, telemetry))
+        feedback = asyncio.create_task(maintain_feedback(bot, archive))
         log.info("Telegram polling started")
         try:
             await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
         finally:
             task.cancel()
             notifications.cancel()
+            feedback.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
             with contextlib.suppress(asyncio.CancelledError):
                 await notifications
+            with contextlib.suppress(asyncio.CancelledError):
+                await feedback
             telemetry.component("bot", "stopped", run_id)
             log.info("bot_stopped")
             await redis.aclose()

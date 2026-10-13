@@ -227,6 +227,7 @@ __marimo__/
 data/index/
 data/models/
 data/monitor/
+data/history/
 logs/
 *.pem
 *.key

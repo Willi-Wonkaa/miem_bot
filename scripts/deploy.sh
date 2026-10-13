@@ -52,11 +52,19 @@ PY
 ln -sfn "$root/shared/.env" "$target/.env"
 mkdir -p "$root/shared/logs"
 mkdir -p "$root/shared/host"
+mkdir -p "$root/shared/history"
+ln -sfn "$root/shared/history" "$target/data/history"
 ln -sfn "$root/shared/logs" "$target/logs"
 ln -sfn "$root/shared/host" "$target/host-monitor"
 # Keep the tracked raw directory, and bind the shared raw directory through an override.
 cat > "$target/compose.server.yaml" <<'YAML'
 services:
+  service:
+    volumes:
+      - /opt/miem-bot/shared/history:/data/history
+  bot:
+    volumes:
+      - /opt/miem-bot/shared/history:/data/history
   indexer:
     volumes:
       - /opt/miem-bot/shared/raw:/data/raw:ro
@@ -69,8 +77,8 @@ compose=(docker compose --project-name miem-bot --project-directory "$target"
 "${compose[@]}" --profile index run --rm --no-deps --entrypoint python indexer -c \
   'import json,zipfile; from pathlib import Path; p=Path("/data/raw/MIEM_knowledge_base_unified.zip"); z=zipfile.ZipFile(p); m=[n for n in z.namelist() if Path(n).name=="manifest.json"]; assert len(m)==1, "Expected one manifest"; docs=json.loads(z.read(m[0]))["documents"]; assert docs, "Empty corpus"; faq=Path("/data/raw/HSE_Answers_RU.xlsx"); assert not faq.exists() or faq.open("rb").read(1); print("Readable source documents:", len(docs))'
 docker run --rm --user 0 --entrypoint python \
-  -v "$root/shared/logs:/data/logs" "miem-bot:$release" \
-  -c 'import os; os.chown("/data/logs",10001,10001); os.chmod("/data/logs",0o755)'
+  -v "$root/shared/logs:/data/logs" -v "$root/shared/history:/data/history" "miem-bot:$release" \
+  -c 'import os; os.chown("/data/logs",10001,10001); os.chmod("/data/logs",0o755); os.chown("/data/history",10001,10001); os.chmod("/data/history",0o700)'
 
 if [[ "$mode" == prepare ]]; then
   ln -sfn "$target" "$root/pending"

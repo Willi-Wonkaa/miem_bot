@@ -9,7 +9,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 RUN groupadd --gid 10001 app && useradd --uid 10001 --gid app --no-create-home app \
-    && mkdir -p /data/index /data/models /data/logs /data/monitor && chown -R app:app /data
+    && mkdir -p /data/index /data/models /data/logs /data/monitor /data/history && chown -R app:app /data
 COPY pyproject.toml uv.lock ./
 
 FROM base AS bot
