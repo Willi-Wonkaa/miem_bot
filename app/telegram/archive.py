@@ -36,9 +36,13 @@ class IncomingArchive(BaseMiddleware):
             if media is not None and hasattr(media, "model_dump"):
                 attachment["metadata"] = media.model_dump(mode="json", exclude_none=True)
         question_id = self.archive.message(
-            user.id, "user", message.text or message.caption or "", message.edit_date or message.date,
-            f"incoming:{message.chat.id}:{message.message_id}" +
-            (f":edited:{message.edit_date.timestamp()}" if message.edit_date else ""), attachment=attachment,
+            user.id,
+            "user",
+            message.text or message.caption or "",
+            message.edit_date or message.date,
+            f"incoming:{message.chat.id}:{message.message_id}"
+            + (f":edited:{message.edit_date.timestamp()}" if message.edit_date else ""),
+            attachment=attachment,
         )
         token = conversation.set(Conversation(user.id, question_id))
         try:
@@ -55,21 +59,36 @@ class OutgoingArchive:
         result = await make_request(bot, method)
         scope = conversation.get()
         if isinstance(result, Message):
-            user_id = scope.user_id if scope else result.chat.id if result.chat.type == "private" else None
+            user_id = (
+                scope.user_id
+                if scope
+                else result.chat.id
+                if result.chat.type == "private"
+                else None
+            )
             if user_id is not None:
                 self.archive.user(user_id)
                 self.archive.message(
-                    user_id, "bot", result.text or result.caption or "", result.date,
+                    user_id,
+                    "bot",
+                    result.text or result.caption or "",
+                    result.date,
                     f"outgoing:{result.chat.id}:{result.message_id}",
                     question_id=scope.question_id if scope else None,
                     answer_id=scope.answer_id if scope else None,
                 )
                 markup = getattr(method, "reply_markup", None)
                 if scope and scope.answer_id and markup and hasattr(markup, "inline_keyboard"):
-                    if any((button.callback_data or "").startswith(f"feedback:{scope.answer_id}:")
-                           for row in markup.inline_keyboard for button in row):
-                        self.archive.sent_feedback(scope.answer_id,
-                            f"outgoing:{result.chat.id}:{result.message_id}", result.date)
+                    if any(
+                        (button.callback_data or "").startswith(f"feedback:{scope.answer_id}:")
+                        for row in markup.inline_keyboard
+                        for button in row
+                    ):
+                        self.archive.sent_feedback(
+                            scope.answer_id,
+                            f"outgoing:{result.chat.id}:{result.message_id}",
+                            result.date,
+                        )
         elif isinstance(method, DeleteMessage) and result:
             self.archive.deleted(f"outgoing:{method.chat_id}:{method.message_id}")
         return result

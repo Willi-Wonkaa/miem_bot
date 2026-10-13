@@ -128,7 +128,9 @@ def test_reclaimable_cache_and_cpu_contention_do_not_request_a_memory_stop(tmp_p
 
 async def test_service_bot_activation_and_status(tmp_path):
     state = Telemetry(tmp_path / "monitor")
-    settings = Settings(_env_file=None, monitor_dir=tmp_path / "monitor", conversation_dir=tmp_path / "history")
+    settings = Settings(
+        _env_file=None, monitor_dir=tmp_path / "monitor", conversation_dir=tmp_path / "history"
+    )
     replies = []
 
     async def telegram_call(bot, method, timeout=None):

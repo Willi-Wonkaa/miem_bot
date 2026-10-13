@@ -87,6 +87,7 @@ def create_dispatcher(
         @dp.edited_message()
         async def record_edit(message: Message):
             return
+
     if telemetry is not None:
         dp.message.outer_middleware(MetricsMiddleware(telemetry, run_id))
 
@@ -172,9 +173,13 @@ def create_dispatcher(
             answer_text = result["answer"]
             parts = answer_parts(answer_text)
             for index, part in enumerate(parts):
-                markup = feedback_keyboard(answer_id) if answer_id and index == len(parts)-1 else None
+                markup = (
+                    feedback_keyboard(answer_id) if answer_id and index == len(parts) - 1 else None
+                )
                 try:
-                    await message.answer(format_telegram_answer(part), parse_mode=ParseMode.HTML, reply_markup=markup)
+                    await message.answer(
+                        format_telegram_answer(part), parse_mode=ParseMode.HTML, reply_markup=markup
+                    )
                 except TelegramBadRequest:
                     await message.answer(part, parse_mode=None, reply_markup=markup)
             if archive is not None and (scope := conversation.get()) is not None:

@@ -76,44 +76,78 @@ class Transcripts:
                 (user_id, name, username, f"{name} {username or ''}".casefold(), time.time()),
             )
 
-    def message(self, user_id, role, text, occurred, transport_key, question_id=None,
-                answer_id=None, attachment=None):
+    def message(
+        self,
+        user_id,
+        role,
+        text,
+        occurred,
+        transport_key,
+        question_id=None,
+        answer_id=None,
+        attachment=None,
+    ):
         with self.connection() as db:
             db.execute(
                 "INSERT OR IGNORE INTO messages "
                 "(user_id,role,text,occurred,recorded,transport_key,question_id,answer_id,attachment) "
                 "VALUES (?,?,?,?,?,?,?,?,?)",
-                (user_id, role, text, timestamp(occurred), time.time(), transport_key,
-                 question_id, answer_id, json.dumps(attachment, ensure_ascii=False) if attachment else None),
+                (
+                    user_id,
+                    role,
+                    text,
+                    timestamp(occurred),
+                    time.time(),
+                    transport_key,
+                    question_id,
+                    answer_id,
+                    json.dumps(attachment, ensure_ascii=False) if attachment else None,
+                ),
             )
-            return db.execute("SELECT id FROM messages WHERE transport_key=?", (transport_key,)).fetchone()[0]
+            return db.execute(
+                "SELECT id FROM messages WHERE transport_key=?", (transport_key,)
+            ).fetchone()[0]
 
     def answer(self, user_id, question_id, result):
         with self.connection() as db:
             cursor = db.execute(
                 "INSERT INTO answers (user_id,question_id,text,answered,model,route,tokens,duration) "
                 "VALUES (?,?,?,?,?,?,?,?)",
-                (user_id, question_id, result["answer"], timestamp(result.get("answered_at")),
-                 result.get("model"), result.get("route"),
-                 result.get("tokens", 0), result.get("time_sec", 0)),
+                (
+                    user_id,
+                    question_id,
+                    result["answer"],
+                    timestamp(result.get("answered_at")),
+                    result.get("model"),
+                    result.get("route"),
+                    result.get("tokens", 0),
+                    result.get("time_sec", 0),
+                ),
             )
             answer_id = cursor.lastrowid
-            db.execute("INSERT INTO feedback (answer_id,user_id,helpful,created) VALUES (?,?,0,?)",
-                       (answer_id,user_id,time.time()))
+            db.execute(
+                "INSERT INTO feedback (answer_id,user_id,helpful,created) VALUES (?,?,0,?)",
+                (answer_id, user_id, time.time()),
+            )
             return answer_id
 
     def deleted(self, transport_key):
         with self.connection() as db:
-            db.execute("UPDATE messages SET deleted=? WHERE transport_key=?", (time.time(), transport_key))
+            db.execute(
+                "UPDATE messages SET deleted=? WHERE transport_key=?", (time.time(), transport_key)
+            )
 
     def users(self, search="", offset=0, limit=10):
         with self.connection() as db:
-            return [dict(row) for row in db.execute(
-                "SELECT users.*, (SELECT COUNT(*) FROM messages WHERE user_id=users.id) AS messages "
-                "FROM users WHERE search LIKE ? OR CAST(id AS TEXT)=? "
-                "ORDER BY updated DESC,id LIMIT ? OFFSET ?",
-                (f"%{search.lstrip('@').casefold()}%", search, limit, offset),
-            )]
+            return [
+                dict(row)
+                for row in db.execute(
+                    "SELECT users.*, (SELECT COUNT(*) FROM messages WHERE user_id=users.id) AS messages "
+                    "FROM users WHERE search LIKE ? OR CAST(id AS TEXT)=? "
+                    "ORDER BY updated DESC,id LIMIT ? OFFSET ?",
+                    (f"%{search.lstrip('@').casefold()}%", search, limit, offset),
+                )
+            ]
 
     def profile(self, user_id):
         with self.connection() as db:
@@ -129,49 +163,73 @@ class Transcripts:
 
     def messages(self, user_id, offset=0, limit=3, after=0, before=253402300799):
         with self.connection() as db:
-            return [dict(row) for row in db.execute(
-                "SELECT m.*, a.answered AS model_answered, a.model, a.route, "
-                "f.helpful,f.comment AS feedback_comment,f.rated AS rated_at "
-                "FROM messages m LEFT JOIN answers a ON a.id=m.answer_id "
-                "LEFT JOIN feedback f ON f.answer_id=m.answer_id "
-                "WHERE m.user_id=? AND m.occurred>=? AND m.occurred<? "
-                "ORDER BY m.occurred DESC,m.id DESC LIMIT ? OFFSET ?",
-                (user_id, after, before, limit, offset),
-            )]
+            return [
+                dict(row)
+                for row in db.execute(
+                    "SELECT m.*, a.answered AS model_answered, a.model, a.route, "
+                    "f.helpful,f.comment AS feedback_comment,f.rated AS rated_at "
+                    "FROM messages m LEFT JOIN answers a ON a.id=m.answer_id "
+                    "LEFT JOIN feedback f ON f.answer_id=m.answer_id "
+                    "WHERE m.user_id=? AND m.occurred>=? AND m.occurred<? "
+                    "ORDER BY m.occurred DESC,m.id DESC LIMIT ? OFFSET ?",
+                    (user_id, after, before, limit, offset),
+                )
+            ]
 
     def rated_answer(self, answer_id, user_id):
         with self.connection() as db:
-            row = db.execute("SELECT * FROM answers WHERE id=? AND user_id=?", (answer_id,user_id)).fetchone()
+            row = db.execute(
+                "SELECT * FROM answers WHERE id=? AND user_id=?", (answer_id, user_id)
+            ).fetchone()
         if row is None:
             raise ValueError("Ответ принадлежит другому пользователю или не найден")
         return dict(row)
 
     def rate(self, answer_id, user_id, score, request_key, buttons_key):
-        if score not in (-1,1):
+        if score not in (-1, 1):
             raise ValueError("Invalid feedback score")
         now = time.time()
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT * FROM feedback WHERE answer_id=? AND user_id=?",
-                             (answer_id,user_id)).fetchone()
-            if (row is None or row["helpful"] != 0 or not row["buttons_active"]
-                    or row["buttons_key"] != buttons_key or row["expires"] is None or row["expires"] <= now):
+            row = db.execute(
+                "SELECT * FROM feedback WHERE answer_id=? AND user_id=?", (answer_id, user_id)
+            ).fetchone()
+            if (
+                row is None
+                or row["helpful"] != 0
+                or not row["buttons_active"]
+                or row["buttons_key"] != buttons_key
+                or row["expires"] is None
+                or row["expires"] <= now
+            ):
                 raise ValueError("Оценка недоступна или уже сохранена")
-            db.execute("INSERT INTO feedback_events (user_id,answer_id,helpful,request_key,created) "
-                       "VALUES (?,?,?,?,?)", (user_id,answer_id,score,request_key,now))
-            db.execute("UPDATE feedback SET helpful=?,rated=?,updated=?,needs_prompt=? WHERE answer_id=?",
-                       (score,now,now,int(score == -1),answer_id))
+            db.execute(
+                "INSERT INTO feedback_events (user_id,answer_id,helpful,request_key,created) "
+                "VALUES (?,?,?,?,?)",
+                (user_id, answer_id, score, request_key, now),
+            )
+            db.execute(
+                "UPDATE feedback SET helpful=?,rated=?,updated=?,needs_prompt=? WHERE answer_id=?",
+                (score, now, now, int(score == -1), answer_id),
+            )
 
     def sent_feedback(self, answer_id, buttons_key, occurred):
         with self.connection() as db:
-            db.execute("UPDATE feedback SET buttons_key=?,expires=?,buttons_active=1 WHERE answer_id=? "
-                       "AND buttons_key IS NULL", (buttons_key,timestamp(occurred)+600,answer_id))
+            db.execute(
+                "UPDATE feedback SET buttons_key=?,expires=?,buttons_active=1 WHERE answer_id=? "
+                "AND buttons_key IS NULL",
+                (buttons_key, timestamp(occurred) + 600, answer_id),
+            )
 
     def cleanup_buttons(self):
         with self.connection() as db:
-            return [dict(row) for row in db.execute(
-                "SELECT * FROM feedback WHERE buttons_active=1 AND (helpful!=0 OR expires<=?)",
-                (time.time(),))]
+            return [
+                dict(row)
+                for row in db.execute(
+                    "SELECT * FROM feedback WHERE buttons_active=1 AND (helpful!=0 OR expires<=?)",
+                    (time.time(),),
+                )
+            ]
 
     def close_buttons(self, answer_id):
         with self.connection() as db:
@@ -179,60 +237,102 @@ class Transcripts:
 
     def prompt_queue(self):
         with self.connection() as db:
-            return [dict(row) for row in db.execute(
-                "SELECT f.*,a.question_id,q.transport_key AS question_key FROM feedback f "
-                "JOIN answers a ON a.id=f.answer_id JOIN messages q ON q.id=a.question_id "
-                "WHERE f.helpful=-1 AND f.needs_prompt=1")]
+            return [
+                dict(row)
+                for row in db.execute(
+                    "SELECT f.*,a.question_id,q.transport_key AS question_key FROM feedback f "
+                    "JOIN answers a ON a.id=f.answer_id JOIN messages q ON q.id=a.question_id "
+                    "WHERE f.helpful=-1 AND f.needs_prompt=1"
+                )
+            ]
 
     def prompt(self, transport_key, user_id, answer_id):
         with self.connection() as db:
-            db.execute("INSERT OR IGNORE INTO feedback_prompts (transport_key,user_id,answer_id) VALUES (?,?,?)",
-                       (transport_key,user_id,answer_id))
+            db.execute(
+                "INSERT OR IGNORE INTO feedback_prompts (transport_key,user_id,answer_id) VALUES (?,?,?)",
+                (transport_key, user_id, answer_id),
+            )
             db.execute("UPDATE feedback SET needs_prompt=0 WHERE answer_id=?", (answer_id,))
 
     def pending(self, transport_key, user_id):
         with self.connection() as db:
-            row = db.execute("SELECT answer_id FROM feedback_prompts WHERE transport_key=? "
-                             "AND user_id=? AND completed=0", (transport_key,user_id)).fetchone()
+            row = db.execute(
+                "SELECT answer_id FROM feedback_prompts WHERE transport_key=? "
+                "AND user_id=? AND completed=0",
+                (transport_key, user_id),
+            ).fetchone()
         return row["answer_id"] if row else None
 
     def comment(self, answer_id, user_id, message_id, text, prompt_key):
-        self.rated_answer(answer_id,user_id)
+        self.rated_answer(answer_id, user_id)
         now = time.time()
         with self.connection() as db:
             inserted = db.execute(
                 "INSERT OR IGNORE INTO feedback_events "
                 "(user_id,answer_id,comment,comment_message_id,request_key,created) VALUES (?,?,?,?,?,?)",
-                (user_id,answer_id,text,message_id,f"comment:{message_id}",now))
+                (user_id, answer_id, text, message_id, f"comment:{message_id}", now),
+            )
             if inserted.rowcount:
-                db.execute("UPDATE feedback SET comment=?,comment_message_id=?,updated=?,commented=? WHERE answer_id=?",
-                           (text,message_id,now,now,answer_id))
-                db.execute("UPDATE feedback_prompts SET completed=1 WHERE answer_id=? AND user_id=?",
-                           (answer_id,user_id))
+                db.execute(
+                    "UPDATE feedback SET comment=?,comment_message_id=?,updated=?,commented=? WHERE answer_id=?",
+                    (text, message_id, now, now, answer_id),
+                )
+                db.execute(
+                    "UPDATE feedback_prompts SET completed=1 WHERE answer_id=? AND user_id=?",
+                    (answer_id, user_id),
+                )
 
     def export(self, user_id):
         # Stream rows to disk: the size of a user's archive must not dictate service-bot RAM.
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.directory,
-                                         prefix="export-", suffix=".json", delete=False) as stream:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=self.directory,
+            prefix="export-",
+            suffix=".json",
+            delete=False,
+        ) as stream:
             path = Path(stream.name)
             try:
                 with self.connection() as db:
-                    row = db.execute("SELECT id,name,username FROM users WHERE id=?", (user_id,)).fetchone()
+                    row = db.execute(
+                        "SELECT id,name,username FROM users WHERE id=?", (user_id,)
+                    ).fetchone()
                     stream.write('{"user":')
                     json.dump(dict(row) if row else {"id": user_id}, stream, ensure_ascii=False)
                     for table in ("messages", "answers", "feedback", "feedback_events"):
                         stream.write(f', "{table}": [')
                         separator = ""
-                        order = "occurred" if table == "messages" else "answered" if table == "answers" else "created"
+                        order = (
+                            "occurred"
+                            if table == "messages"
+                            else "answered"
+                            if table == "answers"
+                            else "created"
+                        )
                         identity = "answer_id" if table == "feedback" else "id"
-                        for row in db.execute(f"SELECT * FROM {table} WHERE user_id=? ORDER BY {order},{identity}", (user_id,)):
+                        for row in db.execute(
+                            f"SELECT * FROM {table} WHERE user_id=? ORDER BY {order},{identity}",
+                            (user_id,),
+                        ):
                             item = dict(row)
                             item.pop("transport_key", None)
                             item.pop("user_id", None)
-                            for field in ("occurred", "recorded", "answered", "deleted", "created", "updated",
-                                          "rated", "commented", "expires"):
+                            for field in (
+                                "occurred",
+                                "recorded",
+                                "answered",
+                                "deleted",
+                                "created",
+                                "updated",
+                                "rated",
+                                "commented",
+                                "expires",
+                            ):
                                 if item.get(field) is not None:
-                                    item[field] = datetime.fromtimestamp(item[field], timezone.utc).isoformat()
+                                    item[field] = datetime.fromtimestamp(
+                                        item[field], timezone.utc
+                                    ).isoformat()
                             for field in ("attachment",):
                                 if item.get(field):
                                     item[field] = json.loads(item[field])
