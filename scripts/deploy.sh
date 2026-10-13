@@ -29,11 +29,14 @@ if [[ ! -f "$root/shared/.env" || ! -f "$root/shared/raw/MIEM_knowledge_base_uni
   echo "Deployment needs shared/.env and shared/raw/MIEM_knowledge_base_unified.zip" >&2
   exit 1
 fi
-python3 - "$root/shared/.env" <<'PY'
+python3 - "$root/shared/.env" "$mode" <<'PY'
 import sys
 values = dict(line.split('=', 1) for line in open(sys.argv[1])
               if '=' in line and not line.lstrip().startswith('#'))
-for name in ('TELEGRAM_BOT_TOKEN', 'POLZA_API_KEY', 'RAG_API_TOKEN'):
+required = ['TELEGRAM_BOT_TOKEN', 'POLZA_API_KEY', 'RAG_API_TOKEN']
+if sys.argv[2] != 'prepare':
+    required.append('SERVICE_BOT_TOKEN')
+for name in required:
     value = values.get(name, '').strip().strip('\"\'')
     if not value or value.startswith('<'):
         raise SystemExit(f'Fill {name} in shared/.env')

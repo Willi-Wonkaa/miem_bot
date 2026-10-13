@@ -23,9 +23,10 @@ nohup python3 "$directory/host-monitor.py" --directory "$directory" --log-dir "$
   >"$directory/monitor-console.txt" 2>&1 </dev/null &
 echo "$!" > "$directory/monitor.pid"
 for attempt in $(seq 1 20); do
-  if python3 - "$directory/host.json" <<'PY'
-import json, sys, time
+  if python3 - "$directory/host.json" "$(cat "$directory/monitor.pid")" <<'PY'
+import json, sys, time, os
 try:
+    os.kill(int(sys.argv[2]),0)
     value=json.load(open(sys.argv[1]))
     assert time.time()-value['updated']<10
 except (OSError,ValueError,KeyError,AssertionError):

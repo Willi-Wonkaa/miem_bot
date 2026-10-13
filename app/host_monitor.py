@@ -151,16 +151,16 @@ def main():
                 )
                 indexer_cpu = float(stats["CPUPerc"].rstrip("%")) / 100
                 pid = int(command("docker", "inspect", "--format", "{{.State.Pid}}", indexer["id"]))
-                cgroup = next(
-                    line.split(":", 2)[2]
-                    for line in Path(f"/proc/{pid}/cgroup").read_text().splitlines()
-                    if line.startswith("0:")
-                )
                 try:
+                    cgroup = next(
+                        line.split(":", 2)[2]
+                        for line in Path(f"/proc/{pid}/cgroup").read_text().splitlines()
+                        if line.startswith("0:")
+                    )
                     indexer_ram = int(
                         (Path("/sys/fs/cgroup") / cgroup.lstrip("/") / "memory.current").read_text()
                     )
-                except OSError:
+                except (OSError, StopIteration):
                     indexer_ram = memory_usage(stats["MemUsage"])
             limits = budget(
                 total_cpu,
