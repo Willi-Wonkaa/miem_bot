@@ -175,7 +175,8 @@ def main():
                         if line.startswith("0:")
                     )
                     indexer_ram, indexer_working_set = cgroup_memory(
-                        Path("/sys/fs/cgroup") / cgroup.lstrip("/"))
+                        Path("/sys/fs/cgroup") / cgroup.lstrip("/")
+                    )
                 except (OSError, StopIteration):
                     indexer_ram = memory_usage(stats["MemUsage"])
                     indexer_working_set = indexer_ram
@@ -212,15 +213,25 @@ def main():
                         f"Монитор памяти: рабочая память индексатора {indexer_working_set / 1024**3:.2f} ГБ, "
                         f"доступный лимит {limits['memory'] / 1024**3:.2f} ГБ; нужен запас 128 МБ."
                     )
-                    atomic_json(args.directory / "indexer-stop.json", {
-                        "container_id": indexer["id"], "kind": "resource_pressure",
-                        "reason": reason, "updated": time.time(),
-                        "memory_current": indexer_ram, "working_set": indexer_working_set,
-                        "memory_budget": limits["memory"], "available_ram": free_ram,
-                    })
+                    atomic_json(
+                        args.directory / "indexer-stop.json",
+                        {
+                            "container_id": indexer["id"],
+                            "kind": "resource_pressure",
+                            "reason": reason,
+                            "updated": time.time(),
+                            "memory_current": indexer_ram,
+                            "working_set": indexer_working_set,
+                            "memory_budget": limits["memory"],
+                            "available_ram": free_ram,
+                        },
+                    )
                     log.warning(
                         "indexer_resource_pressure reason=memory usage=%d working_set=%d budget=%d available=%d; requesting checkpointed stop",
-                        indexer_ram, indexer_working_set, limits["memory"], free_ram,
+                        indexer_ram,
+                        indexer_working_set,
+                        limits["memory"],
+                        free_ram,
                     )
                     subprocess.run(
                         ["docker", "stop", "--timeout", "60", indexer["id"]],

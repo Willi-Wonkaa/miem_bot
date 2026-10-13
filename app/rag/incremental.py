@@ -105,17 +105,25 @@ class IncrementalIndexer:
         known = sum(self.parsed.values())
         units = known + self.aux_total
         processed_units = self.encoded_total + self.aux_encoded
-        remaining_doc = max(0, known - self.encoded_total - max(
-            0, self.cached_doc_units - self.reused_doc_units))
-        remaining_aux = max(0, self.aux_total - self.aux_encoded - max(
-            0, self.cached_aux_units - self.reused_aux_units))
+        remaining_doc = max(
+            0, known - self.encoded_total - max(0, self.cached_doc_units - self.reused_doc_units)
+        )
+        remaining_aux = max(
+            0,
+            self.aux_total
+            - self.aux_encoded
+            - max(0, self.cached_aux_units - self.reused_aux_units),
+        )
         per_worker_rate = self.settings.index_estimated_chunks_per_second
         worker_count = 1 if self.state == "extras" else max(1, len(self.workers))
         rate = self.timing.rate(per_worker_rate * worker_count)
         eta = None
         if self.analysis_complete and rate > 0:
-            eta = ((remaining_doc + remaining_aux) / rate if self.state == "extras"
-                   else remaining_doc / rate + remaining_aux / per_worker_rate)
+            eta = (
+                (remaining_doc + remaining_aux) / rate
+                if self.state == "extras"
+                else remaining_doc / rate + remaining_aux / per_worker_rate
+            )
         if self.state in {"completed", "completed_with_errors"}:
             eta = 0
         elif self.state == "interrupted":
@@ -223,8 +231,10 @@ class IncrementalIndexer:
         self.stop_requested = True
         self.stop_reason = "Процесс получил сигнал остановки"
         request = read_json(self.settings.index_control_dir / "indexer-stop.json", {})
-        if (request.get("updated", 0) >= self.started_at
-                and request.get("container_id") == socket.gethostname()):
+        if (
+            request.get("updated", 0) >= self.started_at
+            and request.get("container_id") == socket.gethostname()
+        ):
             self.stop_reason = request.get("reason", self.stop_reason)
             self.stop_kind = request.get("kind", "")
 
@@ -516,13 +526,13 @@ class IncrementalIndexer:
                 ).encode()
             ).hexdigest()
             self.cached_aux_units += self.cached_count(
-                self.settings.index_dir / "checkpoints" / digest, len(rows), batch_size)
+                self.settings.index_dir / "checkpoints" / digest, len(rows), batch_size
+            )
         self.cached_units = self.cached_doc_units + self.cached_aux_units
         per_worker_rate = self.settings.index_estimated_chunks_per_second
-        self.initial_eta = (
-            (sum(self.parsed.values()) - self.cached_doc_units) / (per_worker_rate * len(self.workers))
-            + (self.aux_total - self.cached_aux_units) / per_worker_rate
-        )
+        self.initial_eta = (sum(self.parsed.values()) - self.cached_doc_units) / (
+            per_worker_rate * len(self.workers)
+        ) + (self.aux_total - self.cached_aux_units) / per_worker_rate
         self.state = "indexing"
         self.progress()
         self.telemetry.event(
@@ -551,7 +561,9 @@ class IncrementalIndexer:
         return sum(
             min(batch_size, count - start)
             for start in range(0, count, batch_size)
-            if self.cached_vectors(directory / f"batch-{start:08d}.npy", min(batch_size, count - start))
+            if self.cached_vectors(
+                directory / f"batch-{start:08d}.npy", min(batch_size, count - start)
+            )
         )
 
     def encode_worker(self, worker_id, pending, results, first_job):
@@ -696,9 +708,7 @@ class IncrementalIndexer:
         old_handler = None
         if multiprocessing.current_process().name == "MainProcess":
             if threading.current_thread() is threading.main_thread():
-                old_handler = signal.signal(
-                    signal.SIGTERM, self.request_stop
-                )
+                old_handler = signal.signal(signal.SIGTERM, self.request_stop)
         pool = ProcessPoolExecutor(
             max_workers=self.settings.index_parse_workers,
             mp_context=multiprocessing.get_context("spawn"),

@@ -96,7 +96,10 @@ def index_text(state):
     progress = state.get("index_progress")
     host = state.host()
     component = host.get("containers", {}).get("indexer", {})
-    if time.time() - host.get("updated", 0) < 60 and component.get("state") not in {None, "running"}:
+    if time.time() - host.get("updated", 0) < 60 and component.get("state") not in {
+        None,
+        "running",
+    }:
         if not progress:
             return "Индексатор остановлен. Сохранённый прогресс отсутствует; проверьте ошибки."
         if progress.get("state") not in {"completed", "completed_with_errors", "interrupted"}:
@@ -303,7 +306,11 @@ async def monitor(bot, state, settings, run_id):
                         component.get("health"),
                     ]
                     if identity != previous.get(name):
-                        if name == "indexer" and component.get("state") == "exited" and state.get("index_progress", {}).get("state") == "interrupted":
+                        if (
+                            name == "indexer"
+                            and component.get("state") == "exited"
+                            and state.get("index_progress", {}).get("state") == "interrupted"
+                        ):
                             previous[name] = identity
                             continue
                         if (
@@ -330,7 +337,9 @@ async def monitor(bot, state, settings, run_id):
                 next_report = time.monotonic() + settings.service_report_seconds
             for subscriber in state.subscribers():
                 for event in state.events(subscriber["cursor"], limit=25):
-                    if event["component"] == "indexer" and event["text"].startswith("indexer: interrupted"):
+                    if event["component"] == "indexer" and event["text"].startswith(
+                        "indexer: interrupted"
+                    ):
                         state.advance(subscriber["chat"], event["id"])
                         continue
                     prefs = subscriber["prefs"]

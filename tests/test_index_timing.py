@@ -43,10 +43,15 @@ def test_stop_signal_reports_the_matching_controller_reason(tmp_path, monkeypatc
     )
     indexer = IncrementalIndexer(settings)
     monkeypatch.setattr("app.rag.incremental.socket.gethostname", lambda: "container-1")
-    atomic_json(settings.index_control_dir / "indexer-stop.json", {
-        "container_id": "container-1", "updated": indexer.started_at + 1,
-        "kind": "resource_pressure", "reason": "Недостаточно памяти",
-    })
+    atomic_json(
+        settings.index_control_dir / "indexer-stop.json",
+        {
+            "container_id": "container-1",
+            "updated": indexer.started_at + 1,
+            "kind": "resource_pressure",
+            "reason": "Недостаточно памяти",
+        },
+    )
     indexer.request_stop()
     assert indexer.stop_requested and indexer.stop_reason == "Недостаточно памяти"
     assert indexer.stop_kind == "resource_pressure"

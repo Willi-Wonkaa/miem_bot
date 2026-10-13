@@ -80,8 +80,11 @@ def test_notification_preferences_survive_restart_and_are_per_chat(tmp_path):
     ]
     assert "status" in callbacks and "toggle:all" in callbacks and "toggle:traffic" in callbacks
     assert "index" in callbacks and "requests" in callbacks
-    buttons = {button.callback_data: button.text
-               for row in keyboard(changed, "notifications").inline_keyboard for button in row}
+    buttons = {
+        button.callback_data: button.text
+        for row in keyboard(changed, "notifications").inline_keyboard
+        for button in row
+    }
     assert buttons["toggle:files"].startswith("🟢")
     assert buttons["toggle:traffic"].startswith("🔴")
 
