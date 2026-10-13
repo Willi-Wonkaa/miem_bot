@@ -1,57 +1,35 @@
-# Запуск
+# Эксплуатация и диагностика
 
-1. Скопировать `.env.example` в `.env`; заполнить токены. Для внутреннего токена:
-   `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
-2. Добавить `MIEM_knowledge_base_unified.zip` и `HSE_Answers_RU.xlsx` в `data/raw/`.
-   Если они рядом с исходным ноутбуком: `python scripts/import_data.py ..`.
-   Исходное имя `MIEM_HSE_knowledge_base.zip` тоже поддерживается при импорте.
-   Данные разрешено коммитить в Git; файлы от 100 MiB нужно хранить на сервере.
-3. Для VPS выполнить `python scripts/start.py` из корня репозитория: служебный бот
-   и сервисы запускаются до индексатора; первый опубликованный документ делает базу доступной.
-   Команда использует опубликованную ветку `main` и серверный `shared/.env`.
-   Локальные изменения сначала закоммитить и отправить в GitHub.
+## Проверка состояния без перезапуска
 
-Архив содержит один `manifest.json` с массивом `documents`.
-Документ: `document_id`, `file` (относительно manifest), `title`, необязательная `category`.
-Форматы: DOCX/TXT/PDF. `all_links.txt` внутри архива необязателен: `описание https://адрес`.
-Excel необязателен; первая вкладка, колонки: `Основной вопрос`,
-`Варианты вопроса на русском` (по одному на строку), `Ответ на русском`.
+`.github/workflows/status.yml` запускает диагностику VPS отдельно от основного workflow:
 
-На VPS используется `/opt/miem-bot`:
+```bash
+gh workflow run status.yml --ref main
+```
 
-- `shared/.env` — токены, права `600`;
-- `shared/raw/` — исходная база и Excel;
-- `releases/<commit>` — версии проекта;
-- `current` — ссылка на успешно запущенную версию.
+Результат содержит состояния контейнеров, CPU/RAM, состояние монитора, прогресс индексации и последние логи индексатора. По умолчанию сервисы не перезапускаются. В ручном запуске есть параметр `repair_monitor=true` — он перезапускает только хостовый монитор.
 
-До первого запуска подготовленная версия доступна через `pending`.
-После заполнения `shared/.env` подготовка, запуск и возобновление индексации — через Actions.
-Режимы: `prepare` (доставка/сборка), `deploy` (запуск), `index` (запуск и индексация).
-Ручные действия ассистента по SSH не используются. Индексатор сохраняет прогресс на диске.
-
-Подготовка нового Ubuntu 24.04: `sudo bash scripts/bootstrap.sh deploy-key.pub`.
-Требуются SSH-ключ и пользователь `miem-deploy`; скрипт ставит Docker + Compose.
-Учётная запись входит в группу Docker и может управлять контейнерами.
-
-Обслуживание на VPS:
+На VPS в активной версии:
 
 ```bash
 cd /opt/miem-bot/current
 export RELEASE_TAG=$(basename "$(pwd -P)")
 docker compose -f compose.yaml -f compose.server.yaml ps
-docker compose -f compose.yaml -f compose.server.yaml logs --tail=100 bot rag
-docker compose -f compose.yaml -f compose.server.yaml --profile index run --rm indexer
-docker compose -f compose.yaml -f compose.server.yaml up -d --force-recreate rag bot
+docker compose -f compose.yaml -f compose.server.yaml logs --tail=100 bot rag service
 ```
 
-После обновления базы выполнить `python scripts/start.py`; RAG подхватывает публикации
-в фоне без перезапуска. Неизменённая база использует готовый индекс.
-История: 5 пар сообщений, TTL 24 часа; `/reset` очищает диалог.
-Для бэкапа сохранить `shared/` и Docker volumes. `docker compose down -v` удаляет volumes.
-Реальные ответы проверяются после добавления базы и токенов; offline-тесты используют тестовый embedder.
+Контейнер `indexer` запускается отдельно с именем `miem-bot-indexer`. Для него используйте `docker logs --tail=100 miem-bot-indexer` и `docker inspect miem-bot-indexer`. Текстовые логи приложения лежат в `/opt/miem-bot/shared/logs/`; монитор пишет в `shared/host/host-monitor.txt` и `monitor-console.txt`.
 
-`shared/raw/` должен быть доступен контейнерному UID 10001: deployment устанавливает
-`755` для каталога и `644` для архива/Excel, затем проверяет чтение архива и manifest
-из контейнера. `.env` сохраняет отдельные права `600`. Ошибка `Permission denied`
-до первого документа означает, что нужно проверить права bind mount, а не повторять
-полную индексацию без исправления доступа.
+## Что смотреть при неполной базе
+
+- `/health` может быть здоров при `index_ready=false`: это означает работающий API без опубликованной базы.
+- Команда `/index` служебного бота показывает состояние анализа, документы, ошибки и ETA. `/index` основного бота даёт краткий статус.
+- Ошибки файлов не уничтожают уже опубликованную часть корпуса. Полная готовность означает `complete=true` в метаданных текущего поколения и отсутствие ошибок.
+- Если индексация остановилась, повторный `index` через Actions использует checkpoints. При нехватке памяти хостовый монитор может приостановить контейнер и возобновить его автоматически.
+
+## Данные и резервная копия
+
+Сохраняйте `/opt/miem-bot/shared/` и Docker volumes `index-data`, `redis-data`, `monitor-data`. `model-cache` можно восстановить загрузкой модели, но его сохранение ускорит запуск. Архив диалогов находится в `shared/history/`. Для работающей SQLite-базы используйте backup API или сохраняйте файл вместе с WAL-файлами; детали — в [описании архива](history.md). Не запускайте `docker compose down -v` без намерения удалить volumes.
+
+`/reset` в основном боте очищает только краткую Redis-историю. Счётчики и подписки служебного бота хранятся отдельно в `monitor-data`. Параметры и токены меняются в серверном `shared/.env`; деплой использует именно его, не локальный `.env`.
