@@ -133,7 +133,9 @@ def create_app(settings: Settings | None = None, pipeline=None) -> FastAPI:
         try:
             snapshot = live.snapshot() if live else None
             remaining_settings = settings.model_copy(
-                update={"request_timeout": settings.request_timeout - (time.perf_counter() - queued_at)}
+                update={
+                    "request_timeout": settings.request_timeout - (time.perf_counter() - queued_at)
+                }
             )
             active = application.state.pipeline or Pipeline(
                 remaining_settings, snapshot, application.state.llm_client
