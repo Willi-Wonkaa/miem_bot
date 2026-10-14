@@ -31,7 +31,9 @@ def test_all_chats_export_keeps_each_users_complete_history(tmp_path):
     assert all(len(user["feedback"]) == 1 for user in data["users"])
 
 
-async def test_log_menu_and_downloads_are_admin_only_and_bundle_is_one_document(tmp_path, monkeypatch):
+async def test_log_menu_and_downloads_are_admin_only_and_bundle_is_one_document(
+    tmp_path, monkeypatch
+):
     monkeypatch.setattr("app.service.exports.ZoneInfo", lambda _: timezone.utc)
     log_dir = tmp_path / "logs"
     log_dir.mkdir()
@@ -39,8 +41,12 @@ async def test_log_menu_and_downloads_are_admin_only_and_bundle_is_one_document(
     (log_dir / "rag.txt").write_text("rag log", encoding="utf-8")
     (log_dir / "parser-42.txt").write_text("parser log", encoding="utf-8")
     settings = Settings(
-        _env_file=None, log_dir=log_dir, conversation_dir=tmp_path / "history",
-        monitor_dir=tmp_path / "monitor", service_admin_ids=(55,), timezone="UTC",
+        _env_file=None,
+        log_dir=log_dir,
+        conversation_dir=tmp_path / "history",
+        monitor_dir=tmp_path / "monitor",
+        service_admin_ids=(55,),
+        timezone="UTC",
     )
     archive = Transcripts(settings.conversation_dir)
     archive.user(7, "Student")
@@ -58,14 +64,17 @@ async def test_log_menu_and_downloads_are_admin_only_and_bundle_is_one_document(
             payload = path.read_bytes()
             sent.append((method.document.filename, method.caption, payload))
             return Message(
-                message_id=2, date=datetime.now(timezone.utc),
+                message_id=2,
+                date=datetime.now(timezone.utc),
                 chat=Chat(id=55, type="private"),
             )
         if isinstance(method, EditMessageText):
             edited.append(method)
             return Message(
-                message_id=1, date=datetime.now(timezone.utc),
-                chat=Chat(id=55, type="private"), text=method.text,
+                message_id=1,
+                date=datetime.now(timezone.utc),
+                chat=Chat(id=55, type="private"),
+                text=method.text,
             )
         if isinstance(method, AnswerCallbackQuery):
             alerts.append(method)
@@ -76,18 +85,23 @@ async def test_log_menu_and_downloads_are_admin_only_and_bundle_is_one_document(
 
     async def click(data, user_id=55):
         query = CallbackQuery(
-            id=str(len(alerts) + 1), from_user=User(id=user_id, is_bot=False, first_name="Admin"),
-            chat_instance="private", data=data,
+            id=str(len(alerts) + 1),
+            from_user=User(id=user_id, is_bot=False, first_name="Admin"),
+            chat_instance="private",
+            data=data,
             message=Message(
-                message_id=1, date=datetime.now(timezone.utc),
-                chat=Chat(id=55, type="private"), text="menu",
+                message_id=1,
+                date=datetime.now(timezone.utc),
+                chat=Chat(id=55, type="private"),
+                text="menu",
             ),
         )
         await dispatcher.feed_update(bot, Update(update_id=len(alerts) + 1, callback_query=query))
 
     try:
         assert "logs:menu" in {
-            button.callback_data for row in keyboard({"_history_admin": True}).inline_keyboard
+            button.callback_data
+            for row in keyboard({"_history_admin": True}).inline_keyboard
             for button in row
         }
         assert "logs:menu" not in {
@@ -100,9 +114,16 @@ async def test_log_menu_and_downloads_are_admin_only_and_bundle_is_one_document(
         assert edited[-1].text == "Выгрузка логов и переписок"
         buttons = {
             button.text: button.callback_data
-            for row in export_keyboard(log_dir).inline_keyboard for button in row
+            for row in export_keyboard(log_dir).inline_keyboard
+            for button in row
         }
-        assert {"Работа бота", "LLM и RAG", "Parser 42", "Все чаты", "Выгрузить все логи"} <= buttons.keys()
+        assert {
+            "Работа бота",
+            "LLM и RAG",
+            "Parser 42",
+            "Все чаты",
+            "Выгрузить все логи",
+        } <= buttons.keys()
 
         await click(buttons["Работа бота"])
         assert sent[-1][0] == "bot.txt" and sent[-1][2] == b"bot log"
@@ -121,7 +142,10 @@ async def test_log_menu_and_downloads_are_admin_only_and_bundle_is_one_document(
 
         with ZipFile(BytesIO(sent[-1][2])) as bundle:
             assert set(bundle.namelist()) == {
-                "logs/bot.txt", "logs/rag.txt", "logs/parser-42.txt", "all-chats.json"
+                "logs/bot.txt",
+                "logs/rag.txt",
+                "logs/parser-42.txt",
+                "all-chats.json",
             }
             assert json.loads(bundle.read("all-chats.json"))["users"][0]["user"]["id"] == 7
     finally:

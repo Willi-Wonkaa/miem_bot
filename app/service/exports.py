@@ -51,11 +51,13 @@ def export_keyboard(directory: Path):
         [InlineKeyboardButton(text=log_label(path), callback_data=f"logs:file:{file_key(path)}")]
         for path in log_files(directory)
     ]
-    rows.extend([
-        [InlineKeyboardButton(text="Все чаты", callback_data="logs:chats")],
-        [InlineKeyboardButton(text="Выгрузить все логи", callback_data="logs:all")],
-        [InlineKeyboardButton(text="Назад", callback_data="status")],
-    ])
+    rows.extend(
+        [
+            [InlineKeyboardButton(text="Все чаты", callback_data="logs:chats")],
+            [InlineKeyboardButton(text="Выгрузить все логи", callback_data="logs:all")],
+            [InlineKeyboardButton(text="Назад", callback_data="status")],
+        ]
+    )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -144,12 +146,12 @@ def register_exports(dp, archive, settings):
             else:
                 paths = log_files(settings.log_dir)
                 bundle = await asyncio.to_thread(make_bundle, paths, chats_path)
-                await send_file(
-                    query, bundle, f"all-logs-and-chats-{stamp}.zip", "Все логи и чаты"
-                )
+                await send_file(query, bundle, f"all-logs-and-chats-{stamp}.zip", "Все логи и чаты")
         except Exception:
             log.exception("service_export_failed kind=%s", action[1])
-            await query.message.answer("Не удалось подготовить или отправить выгрузку. Попробуйте ещё раз.")
+            await query.message.answer(
+                "Не удалось подготовить или отправить выгрузку. Попробуйте ещё раз."
+            )
         finally:
             if bundle:
                 bundle.unlink(missing_ok=True)

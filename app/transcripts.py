@@ -312,8 +312,12 @@ class Transcripts:
     def export_all(self):
         """Stream a consistent, Python-friendly snapshot of every archived user."""
         with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", dir=self.directory,
-            prefix="export-all-", suffix=".json", delete=False,
+            mode="w",
+            encoding="utf-8",
+            dir=self.directory,
+            prefix="export-all-",
+            suffix=".json",
+            delete=False,
         ) as stream:
             path = Path(stream.name)
             try:
@@ -351,8 +355,15 @@ class Transcripts:
                 item.pop("transport_key", None)
                 item.pop("user_id", None)
                 for field in (
-                    "occurred", "recorded", "answered", "deleted", "created",
-                    "updated", "rated", "commented", "expires",
+                    "occurred",
+                    "recorded",
+                    "answered",
+                    "deleted",
+                    "created",
+                    "updated",
+                    "rated",
+                    "commented",
+                    "expires",
                 ):
                     if item.get(field) is not None:
                         item[field] = datetime.fromtimestamp(item[field], timezone.utc).isoformat()
