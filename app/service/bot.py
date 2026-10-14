@@ -20,6 +20,7 @@ from aiogram.types import (
 
 from app.config import Settings
 from app.logging_setup import setup_logging
+from app.service.exports import register_exports
 from app.service.history import register_history
 from app.telemetry import EVENT_TYPES, Telemetry, duration
 from app.transcripts import Transcripts
@@ -202,6 +203,7 @@ def keyboard(prefs, view="status"):
     ]
     if prefs.get("_history_admin"):
         rows.append([InlineKeyboardButton(text="Переписки", callback_data="archive:u:0")])
+        rows.append([InlineKeyboardButton(text="Выгрузка логов", callback_data="logs:menu")])
     if view == "notifications":
         for kind, label in {"all": "Все уведомления", **EVENT_TYPES}.items():
             rows.append(
@@ -224,7 +226,9 @@ def keyboard(prefs, view="status"):
 
 def create_dispatcher(state, settings):
     dp = Dispatcher()
-    register_history(dp, Transcripts(settings.conversation_dir), settings)
+    archive = Transcripts(settings.conversation_dir)
+    register_history(dp, archive, settings)
+    register_exports(dp, archive, settings)
 
     def prefs(chat):
         state.subscribe(chat)

@@ -295,51 +295,12 @@ class Transcripts:
             path = Path(stream.name)
             try:
                 with self.connection() as db:
+                    db.execute("BEGIN")
                     row = db.execute(
                         "SELECT id,name,username FROM users WHERE id=?", (user_id,)
                     ).fetchone()
-                    stream.write('{"user":')
-                    json.dump(dict(row) if row else {"id": user_id}, stream, ensure_ascii=False)
-                    for table in ("messages", "answers", "feedback", "feedback_events"):
-                        stream.write(f', "{table}": [')
-                        separator = ""
-                        order = (
-                            "occurred"
-                            if table == "messages"
-                            else "answered"
-                            if table == "answers"
-                            else "created"
-                        )
-                        identity = "answer_id" if table == "feedback" else "id"
-                        for row in db.execute(
-                            f"SELECT * FROM {table} WHERE user_id=? ORDER BY {order},{identity}",
-                            (user_id,),
-                        ):
-                            item = dict(row)
-                            item.pop("transport_key", None)
-                            item.pop("user_id", None)
-                            for field in (
-                                "occurred",
-                                "recorded",
-                                "answered",
-                                "deleted",
-                                "created",
-                                "updated",
-                                "rated",
-                                "commented",
-                                "expires",
-                            ):
-                                if item.get(field) is not None:
-                                    item[field] = datetime.fromtimestamp(
-                                        item[field], timezone.utc
-                                    ).isoformat()
-                            for field in ("attachment",):
-                                if item.get(field):
-                                    item[field] = json.loads(item[field])
-                            stream.write(separator)
-                            json.dump(item, stream, ensure_ascii=False)
-                            separator = ","
-                        stream.write("]")
+                    stream.write("{")
+                    self._write_user(stream, db, user_id, dict(row) if row else {"id": user_id})
                     stream.write("}")
                 stream.flush()
                 os.fsync(stream.fileno())
@@ -347,3 +308,57 @@ class Transcripts:
                 path.unlink(missing_ok=True)
                 raise
         return path
+
+    def export_all(self):
+        """Stream a consistent, Python-friendly snapshot of every archived user."""
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=self.directory,
+            prefix="export-all-", suffix=".json", delete=False,
+        ) as stream:
+            path = Path(stream.name)
+            try:
+                with self.connection() as db:
+                    db.execute("BEGIN")
+                    stream.write('{"users":[')
+                    separator = ""
+                    for row in db.execute("SELECT id,name,username FROM users ORDER BY id"):
+                        stream.write(separator + "{")
+                        self._write_user(stream, db, row["id"], dict(row))
+                        stream.write("}")
+                        separator = ","
+                    stream.write("]}")
+                stream.flush()
+                os.fsync(stream.fileno())
+            except BaseException:
+                path.unlink(missing_ok=True)
+                raise
+        return path
+
+    @staticmethod
+    def _write_user(stream, db, user_id, profile):
+        stream.write('"user":')
+        json.dump(profile, stream, ensure_ascii=False)
+        for table in ("messages", "answers", "feedback", "feedback_events"):
+            stream.write(f', "{table}": [')
+            separator = ""
+            order = {"messages": "occurred", "answers": "answered"}.get(table, "created")
+            identity = "answer_id" if table == "feedback" else "id"
+            for row in db.execute(
+                f"SELECT * FROM {table} WHERE user_id=? ORDER BY {order},{identity}",
+                (user_id,),
+            ):
+                item = dict(row)
+                item.pop("transport_key", None)
+                item.pop("user_id", None)
+                for field in (
+                    "occurred", "recorded", "answered", "deleted", "created",
+                    "updated", "rated", "commented", "expires",
+                ):
+                    if item.get(field) is not None:
+                        item[field] = datetime.fromtimestamp(item[field], timezone.utc).isoformat()
+                if item.get("attachment"):
+                    item["attachment"] = json.loads(item["attachment"])
+                stream.write(separator)
+                json.dump(item, stream, ensure_ascii=False)
+                separator = ","
+            stream.write("]")
