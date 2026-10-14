@@ -16,15 +16,20 @@ from app.transcripts import Transcripts
 def test_all_chats_export_keeps_each_users_complete_history(tmp_path):
     archive = Transcripts(tmp_path)
     for user_id in (7, 8):
-        archive.user(user_id, f"User {user_id}")
+        archive.user(user_id, f"Пользователь {user_id}")
         question = archive.message(user_id, "user", f"question {user_id}", 1000, f"in:{user_id}")
         archive.answer(user_id, question, {"answer": f"answer {user_id}", "answered_at": 1001})
         archive.message(user_id, "bot", f"answer {user_id}", 1002, f"out:{user_id}")
     path = archive.export_all()
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        content = path.read_text(encoding="utf-8")
+        data = json.loads(content)
     finally:
         path.unlink()
+    assert content.startswith('{\n  "users": [\n    {\n      "user": {\n')
+    assert '\n      "messages": [\n        {\n' in content
+    assert '\n          "text": "question 7"' in content
+    assert "Пользователь 7" in content
     assert [user["user"]["id"] for user in data["users"]] == [7, 8]
     assert [row["role"] for row in data["users"][0]["messages"]] == ["user", "bot"]
     assert data["users"][1]["answers"][0]["text"] == "answer 8"

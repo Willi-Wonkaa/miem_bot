@@ -88,7 +88,10 @@ def test_full_history_and_feedback_export(tmp_path, monkeypatch):
     archive.user(8, "Other")
     archive.message(8, "user", "private", 1000, "incoming:8:1")
     path = archive.export(7)
-    exported = json.loads(path.read_text(encoding="utf-8"))
+    content = path.read_text(encoding="utf-8")
+    exported = json.loads(content)
+    assert content.startswith('{\n  "user": {\n')
+    assert '\n  "messages": [\n    {\n' in content
     assert len(exported["messages"]) == 22
     assert all(row["text"] != "private" for row in exported["messages"])
     assert (

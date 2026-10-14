@@ -300,8 +300,8 @@ class Transcripts:
                         "SELECT id,name,username FROM users WHERE id=?", (user_id,)
                     ).fetchone()
                     stream.write("{")
-                    self._write_user(stream, db, user_id, dict(row) if row else {"id": user_id})
-                    stream.write("}")
+                    self._write_user(stream, db, user_id, dict(row) if row else {"id": user_id}, 1)
+                    stream.write("\n}\n")
                 stream.flush()
                 os.fsync(stream.fileno())
             except BaseException:
@@ -323,14 +323,14 @@ class Transcripts:
             try:
                 with self.connection() as db:
                     db.execute("BEGIN")
-                    stream.write('{"users":[')
+                    stream.write('{\n  "users": [')
                     separator = ""
                     for row in db.execute("SELECT id,name,username FROM users ORDER BY id"):
-                        stream.write(separator + "{")
-                        self._write_user(stream, db, row["id"], dict(row))
-                        stream.write("}")
+                        stream.write(separator + "\n    {")
+                        self._write_user(stream, db, row["id"], dict(row), 3)
+                        stream.write("\n    }")
                         separator = ","
-                    stream.write("]}")
+                    stream.write("\n  ]\n}\n" if separator else "]\n}\n")
                 stream.flush()
                 os.fsync(stream.fileno())
             except BaseException:
@@ -339,11 +339,19 @@ class Transcripts:
         return path
 
     @staticmethod
-    def _write_user(stream, db, user_id, profile):
-        stream.write('"user":')
-        json.dump(profile, stream, ensure_ascii=False)
+    def _write_json(stream, value, left_margin):
+        encoder = json.JSONEncoder(ensure_ascii=False, indent=2)
+        padding = " " * left_margin
+        for chunk in encoder.iterencode(value):
+            stream.write(chunk.replace("\n", "\n" + padding))
+
+    @classmethod
+    def _write_user(cls, stream, db, user_id, profile, indent):
+        margin = "  " * indent
+        stream.write(f'\n{margin}"user": ')
+        cls._write_json(stream, profile, len(margin))
         for table in ("messages", "answers", "feedback", "feedback_events"):
-            stream.write(f', "{table}": [')
+            stream.write(f',\n{margin}"{table}": [')
             separator = ""
             order = {"messages": "occurred", "answers": "answered"}.get(table, "created")
             identity = "answer_id" if table == "feedback" else "id"
@@ -369,7 +377,7 @@ class Transcripts:
                         item[field] = datetime.fromtimestamp(item[field], timezone.utc).isoformat()
                 if item.get("attachment"):
                     item["attachment"] = json.loads(item["attachment"])
-                stream.write(separator)
-                json.dump(item, stream, ensure_ascii=False)
+                stream.write(f"{separator}\n{margin}  ")
+                cls._write_json(stream, item, len(margin) + 2)
                 separator = ","
-            stream.write("]")
+            stream.write(f"\n{margin}]" if separator else "]")
